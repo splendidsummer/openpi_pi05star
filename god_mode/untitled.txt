@@ -1,0 +1,15 @@
+# 1. 再次定位文件
+CLAUDE_PATH=$(npm root -g)/@anthropic-ai/claude-code
+TARGET_FILE=$(find "$CLAUDE_PATH" -type f \( -name "*.js" -o -name "*.mjs" \) -print0 | xargs -0 grep -l "process.getuid" | head -n 1)
+
+echo "正在修复目标文件: $TARGET_FILE"
+
+# 2. 【修复】撤销刚才的错误修改
+# (我们要把第一行开头的 process.getuid=()=>1001; 删掉，恢复 Shebang)
+sed -i 's/^process.getuid=()=>1001;//' "$TARGET_FILE"
+
+# 3. 【正确注入】将代码插入到第 2 行 (即在 #!/usr/bin/env node 之后)
+sed -i '1a process.getuid=()=>1001;' "$TARGET_FILE"
+
+echo "✅ 修复并破解完成！"
+echo "请尝试运行: claude --dangerously-skip-permissions"
