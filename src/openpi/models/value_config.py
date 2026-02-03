@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class ValueConfig(_model.BaseModelConfig):
     dtype: str = "bfloat16"
     paligemma_variant: _gemma.Variant = "gemma_3_270m"
+    # TODO: tune this value accordingly
     num_value_bins: int = 201  
     model_path: str = "path/to/gemma3_270m/model"
     # Set the model specific defaults.

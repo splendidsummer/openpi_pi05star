@@ -41,12 +41,12 @@ GIT_LFS_SKIP_SMUDGE=1 uv pip install -e .
 To avoid filling the home directory cache, set the following environment variables before running any commands:
 ```bash
 export HF_LEROBOT_HOME=/root/autodl-tmp/huggingface
-export HF_HOME=/root/autodl-tmp/.cache
+export HF_HOME=/root/autodl-tmp/huggingface
 export OPENPI_DATA_HOME=/root/autodl-tmp/openpi_cache
 ```
 
 - `HF_LEROBOT_HOME=/root/autodl-tmp/huggingface` – LeRobot datasets cache here
-- `HF_HOME=/root/autodl-tmp/.cache` – HuggingFace general cache
+- `HF_HOME=/root/autodl-tmp/huggingface` – HuggingFace general cache
 - `OPENPI_DATA_HOME=/root/autodl-tmp/openpi_cache` – openpi assets cache
 
 ### Training

@@ -106,7 +106,11 @@ def make_attn_mask(input_mask, mask_ar):
 
 class Value(_model.BaseModel):
     def __init__(self, config: value_config.ValueConfig, rngs: nnx.Rngs):
-        super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
+        super().__init__(
+            # config.action_dim, 
+            # config.action_horizon,
+            config.max_token_len
+            )
         self.pi05 = config.pi05
         self.model_path = config.model_path 
         self.num_value_bins = config.num_value_bins 

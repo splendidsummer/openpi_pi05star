@@ -33,13 +33,21 @@ class ModelType(enum.Enum):
     PI0_FAST = "pi0_fast"
     PI05 = "pi05"
     VALUE = "value"
+    PI05_STAR = "pi05_star"
+    
 
+# # The model always expects these images
+# IMAGE_KEYS = (
+#     "base_0_rgb",
+#     "left_wrist_0_rgb",
+#     "right_wrist_0_rgb",
+# )
 
 # The model always expects these images
 IMAGE_KEYS = (
     "base_0_rgb",
-    "left_wrist_0_rgb",
-    "right_wrist_0_rgb",
+    "base_1_rgb", 
+    "wrist_0_rgb"
 )
 
 
@@ -108,26 +116,58 @@ class Observation(Generic[ArrayT]):
     # Token loss mask (for FAST autoregressive model).
     token_loss_mask: at.Bool[ArrayT, "*b l"] | None = None
 
+    # STAR expert tokenized prompt.
+    star_tokenized_prompt: at.Int[ArrayT, "*b l_star"] | None = None
+    # STAR expert tokenized prompt mask.
+    star_tokenized_prompt_mask: at.Bool[ArrayT, "*b l_star"] | None = None
+
+    # FAST expert tokenized prompt.
+    fast_tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
+    # FAST expert tokenized prompt mask.
+    fast_tokenized_prompt_mask: at.Bool[ArrayT, "*b l"] | None = None
+    # FAST expert token auto-regressive mask.
+    fast_token_ar_mask: at.Int[ArrayT, "*b l"] | None = None
+    # FAST expert token loss mask.
+    fast_token_loss_mask: at.Bool[ArrayT, "*b l"] | None = None
+
     @classmethod
     def from_dict(cls, data: at.PyTree[ArrayT]) -> "Observation[ArrayT]":
         """This method defines the mapping between unstructured data (i.e., nested dict) to the structured Observation format."""
+        # Determine tokenized_prompt and tokenized_prompt_mask: prefer fast_tokenized_prompt over
+        # tokenized_prompt if present. This allows using the FAST/STAR tokenizers which produce
+        # fast_tokenized_prompt.
+        tokenized_prompt = data.get("fast_tokenized_prompt", data.get("tokenized_prompt"))
+        tokenized_prompt_mask = data.get("fast_tokenized_prompt_mask", data.get("tokenized_prompt_mask")) 
+
         # Ensure that tokenized_prompt and tokenized_prompt_mask are provided together.
-        if ("tokenized_prompt" in data) != ("tokenized_prompt_mask" in data):
+        if (tokenized_prompt is not None) != (tokenized_prompt_mask is not None):
             raise ValueError("tokenized_prompt and tokenized_prompt_mask must be provided together.")
+            
         # If images are uint8, convert them to [-1, 1] float32.
         for key in data["image"]:
             if data["image"][key].dtype == np.uint8:
                 data["image"][key] = data["image"][key].astype(np.float32) / 255.0 * 2.0 - 1.0
             elif hasattr(data["image"][key], "dtype") and data["image"][key].dtype == torch.uint8:
                 data["image"][key] = data["image"][key].to(torch.float32).permute(0, 3, 1, 2) / 255.0 * 2.0 - 1.0
+
+        # Determine token_ar_mask and token_loss_mask: prefer fast_token_* if present for backward compatibility
+        token_ar_mask = data.get("fast_token_ar_mask", data.get("token_ar_mask"))
+        token_loss_mask = data.get("fast_token_loss_mask", data.get("token_loss_mask"))
+
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
             state=data["state"],
-            tokenized_prompt=data.get("tokenized_prompt"),
-            tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
-            token_ar_mask=data.get("token_ar_mask"),
-            token_loss_mask=data.get("token_loss_mask"),
+            tokenized_prompt=tokenized_prompt,
+            tokenized_prompt_mask=tokenized_prompt_mask,
+            token_ar_mask=token_ar_mask,
+            token_loss_mask=token_loss_mask,
+            star_tokenized_prompt=data.get("star_tokenized_prompt"),
+            star_tokenized_prompt_mask=data.get("star_tokenized_prompt_mask"),
+            fast_tokenized_prompt=data.get("fast_tokenized_prompt"),
+            fast_tokenized_prompt_mask=data.get("fast_tokenized_prompt_mask"),
+            fast_token_ar_mask=data.get("fast_token_ar_mask"),
+            fast_token_loss_mask=data.get("fast_token_loss_mask"),
         )
 
     def to_dict(self) -> at.PyTree[ArrayT]:
@@ -139,7 +179,8 @@ class Observation(Generic[ArrayT]):
 
 
 # Defines the format of the actions. This field is included as "actions" inside the dictionary
-# produced by the data transforms.
+# produced by the data transforms.  
+
 Actions = at.Float[ArrayT, "*b ah ad"]
 
 
@@ -199,15 +240,22 @@ def preprocess_observation(
         else:
             out_masks[key] = jnp.asarray(observation.image_masks[key])
 
-    return Observation(
-        images=out_images,
-        image_masks=out_masks,
-        state=observation.state,
-        tokenized_prompt=observation.tokenized_prompt,
-        tokenized_prompt_mask=observation.tokenized_prompt_mask,
-        token_ar_mask=observation.token_ar_mask,
-        token_loss_mask=observation.token_loss_mask,
-    )
+    with at.disable_typechecking():
+        return Observation(
+            images=out_images,
+            image_masks=out_masks,
+            state=observation.state,
+            tokenized_prompt=observation.tokenized_prompt,
+            tokenized_prompt_mask=observation.tokenized_prompt_mask,
+            token_ar_mask=observation.token_ar_mask,
+            token_loss_mask=observation.token_loss_mask,
+            star_tokenized_prompt=observation.star_tokenized_prompt,
+            star_tokenized_prompt_mask=observation.star_tokenized_prompt_mask,
+            fast_tokenized_prompt=observation.fast_tokenized_prompt,
+            fast_tokenized_prompt_mask=observation.fast_tokenized_prompt_mask,
+            fast_token_ar_mask=observation.fast_token_ar_mask,
+            fast_token_loss_mask=observation.fast_token_loss_mask,
+        )
 
 
 @dataclasses.dataclass(frozen=True)

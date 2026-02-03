@@ -41,7 +41,8 @@ class DroidInputs(transforms.DataTransformFn):
 
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference
-        base_image = _parse_image(data["observation/exterior_image_1_left"])
+        base_image_1 = _parse_image(data["observation/exterior_image_1_left"])
+        base_image_2 = _parse_image(data["observation/exterior_image_2_left"])
         wrist_image = _parse_image(data["observation/wrist_image_left"])
 
         match self.model_type:
@@ -54,11 +55,14 @@ class DroidInputs(transforms.DataTransformFn):
                 # We don't mask out padding images for FAST models.
                 images = (base_image, np.zeros_like(base_image), wrist_image)
                 image_masks = (np.True_, np.True_, np.True_)
-            
             case _model.ModelType.VALUE:
                 names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
                 images = (base_image, wrist_image, np.zeros_like(base_image))
                 image_masks = (np.True_, np.True_, np.False_)
+            case _model.ModelType.PI05_STAR:
+                names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
+                images = (base_image_1, base_image_1,  wrist_image)
+                image_masks = (np.True_, np.True_,  np.True_)
             case _:
                 raise ValueError(f"Unsupported model type: {self.model_type}")
 
@@ -76,14 +80,12 @@ class DroidInputs(transforms.DataTransformFn):
                 data["prompt"] = data["prompt"].decode("utf-8")
             inputs["prompt"] = data["prompt"]
 
-        # 对于 VALUE 模型，将 state_value 转换为 value_targets
+
+        # For VALUE model: handle state_value as value_targets
         if self.model_type == _model.ModelType.VALUE and "state_value" in data:
             state_value = np.asarray(data["state_value"])
-            # 确保 value_targets 是 1D 数组 (batch_size,) 用于后续处理
-            # 如果是标量，转换为 1D 数组
             if state_value.ndim == 0:
                 state_value = state_value[np.newaxis]
-            # 如果是 2D，squeeze 掉最后一个维度（如果是 1）或展平
             elif state_value.ndim >= 2:
                 if state_value.shape[-1] == 1:
                     state_value = state_value.squeeze(-1)
@@ -91,16 +93,31 @@ class DroidInputs(transforms.DataTransformFn):
                     state_value = state_value.flatten()
             inputs["value_targets"] = state_value
 
-        # 添加 reward 到输入键中
+        # For VALUE model: handle reward
         if self.model_type == _model.ModelType.VALUE and "reward" in data:
             reward = np.asarray(data["reward"])
-            # 确保 reward 是 1D 数组 (batch_size,)
             if reward.ndim == 0:
                 reward = reward[np.newaxis]
             elif reward.ndim >= 2:
                 reward = reward.flatten()
             inputs["reward"] = reward
+            
+        # For PI05_STAR model: handle adv_indicator as a bool
+        if self.model_type == _model.ModelType.PI05_STAR and "adv_indicator" in data:
+            adv_indicator = data["adv_indicator"]
+            
+            # --- 新增兼容性逻辑 ---
+            # 如果是 np.array([1], dtype=bool) 或对应的 Tensor
+            # 使用 .item() 获取其中的标量，并用 bool() 强制转换为 Python 原生布尔类型
+            if hasattr(adv_indicator, "item"):
+                adv_indicator = bool(adv_indicator.item())
+            elif isinstance(adv_indicator, (list, np.ndarray)) and len(adv_indicator) > 0:
+                adv_indicator = bool(adv_indicator[0])
 
+            # 此时 isinstance(adv_indicator, bool) 检查将会通过
+            if not isinstance(adv_indicator, bool):
+                raise ValueError(f"adv_indicator must be a boolean value, but got {type(adv_indicator)}")        
+     
         return inputs
 
 
@@ -108,4 +125,5 @@ class DroidInputs(transforms.DataTransformFn):
 class DroidOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first 8 dims.
+
         return {"actions": np.asarray(data["actions"][:, :8])}

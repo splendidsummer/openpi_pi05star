@@ -267,6 +267,41 @@ class TokenizePrompt(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class TokenizeStarPrompt(DataTransformFn):
+    tokenizer: _tokenizer.PaliGemmaStarTokenizer
+    discrete_state_input: bool = False
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if (prompt := data.pop("prompt", None)) is None:
+            raise ValueError("Prompt is required")
+
+        if self.discrete_state_input:
+            if (state := data.get("state", None)) is None:
+                raise ValueError("State is required.")
+        else:
+            state = None
+        
+        actions = data.get("actions", None)
+
+        if not isinstance(prompt, str):
+            prompt = prompt.item()
+
+        star_tokens, star_token_masks = self.tokenizer.star_tokenize(prompt, state)
+        fast_tokens, fast_token_masks, fast_ar_masks, fast_loss_masks = self.tokenizer.fast_tokenize(prompt, state, actions)    
+        
+        return {**data, 
+                
+            "star_tokenized_prompt": star_tokens,
+            "star_tokenized_prompt_mask": star_token_masks, 
+            
+            "fast_tokenized_prompt": fast_tokens,
+            "fast_tokenized_prompt_mask": fast_token_masks,
+            "fast_token_ar_mask": fast_ar_masks,
+            "fast_token_loss_mask": fast_loss_masks,
+            }
+
+
+@dataclasses.dataclass(frozen=True)
 class TokenizeFASTInputs(DataTransformFn):
     tokenizer: _tokenizer.FASTTokenizer
 

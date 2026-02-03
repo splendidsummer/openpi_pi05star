@@ -1,0 +1,39 @@
+{
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "env": {
+                "HF_LEROBOT_HOME": "/root/autodl-tmp/huggingface",
+                "HF_HOME": "/root/autodl-tmp/huggingface",
+                "OPENPI_DATA_HOME": "/root/autodl-tmp/openpi_cache",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
+                "CUDA_VISIBLE_DEVICES": ""
+            }
+        },
+
+        {
+            "name": "Compute Stats",
+            "type": "debugpy",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/compute_norm_stats.py",
+            "console": "integratedTerminal",            
+            "env": {
+                // "HF_LEROBOT_HOME": "/root/autodl-tmp/huggingface/lerobot",
+                "HF_HOME": "/root/autodl-tmp/huggingface",
+                "OPENPI_DATA_HOME": "/root/autodl-tmp/openpi_cache",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
+                "CUDA_VISIBLE_DEVICES": "", 
+            }, 
+            "args": [
+                "--config-name", "pi05_droid_star"
+            ]
+        },
+
+   ]
+} 

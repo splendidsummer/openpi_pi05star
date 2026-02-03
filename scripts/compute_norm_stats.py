@@ -15,6 +15,22 @@ import openpi.training.config as _config
 import openpi.training.data_loader as _data_loader
 import openpi.transforms as transforms
 
+import os
+
+# 使用 pop 方法删除环境变量
+# 第二个参数 None 确保了即使该变量不存在，代码也不会抛出 KeyError 错误
+os.environ.pop('HF_LEROBOT_HOME', None)
+
+# 验证结果
+if 'HF_LEROBOT_HOME' not in os.environ:
+    print("成功：环境变量 HF_LEROBOT_HOME 当前未设置。")
+    
+import os
+# 禁止 JAX 预分配显存，改为按需分配
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+# 如果还是报错，尝试限制 JAX 只能看到当前显卡
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
+
 
 class RemoveStrings(transforms.DataTransformFn):
     def __call__(self, x: dict) -> dict:
