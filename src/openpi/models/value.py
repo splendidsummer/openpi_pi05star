@@ -51,25 +51,27 @@ class DistributionalValueHeadGemma3(nnx.Module):
 
         # 定义层 - 使用默认初始化器以避免 pytree 结构不匹配
         # NNX 的默认初始化器在 JIT 编译时保持一致的 pytree 结构
-        self.head_l1 = nnx.Linear(hidden_size, 512, rngs=rngs)
-        self.head_l2 = nnx.Linear(512, 128, rngs=rngs)
+        self.head_l1 = nnx.Linear(hidden_size, 512, rngs=rngs)         # bias=True
+        self.head_l2 = nnx.Linear(512, 128, rngs=rngs)                 # bias=True
         # 输出层，从 128 映射到 201 bins
-        self.head_l3 = nnx.Linear(128, num_bins, use_bias=False, rngs=rngs)
+        # Keep bias=True (default). If checkpoint doesn't have bias, it will be skipped during loading
+        # and the bias will use its initialized values.
+        self.head_l3 = nnx.Linear(128, num_bins, rngs=rngs)
 
     def __call__(self, x: jax.Array, return_expectation: bool = True):
         # Forward pass
         x = nnx.silu(self.head_l1(x))
         x = nnx.silu(self.head_l2(x))
 
-        # 得到 Logits
+        # Get logits
         logits = self.head_l3(x)
 
-        # 计算每个 Bin 的概率 (Softmax)
+        # Compute probabilities for each bin (Softmax)
         probs = jax.nn.softmax(logits, axis=-1)
 
         if return_expectation:
-            # 对应图片中的公式: V = sum(p * v(b))
-            # 使用点积计算期望价值
+            # Formula: V = sum(p * v(b))
+            # Use dot product to compute expected value
             expectation = jnp.sum(probs * self.support.value, axis=-1)
             return expectation
 
@@ -106,7 +108,11 @@ def make_attn_mask(input_mask, mask_ar):
 
 class Value(_model.BaseModel):
     def __init__(self, config: value_config.ValueConfig, rngs: nnx.Rngs):
-        super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
+        super().__init__(
+            config.action_dim, 
+            config.action_horizon,
+            config.max_token_len
+            )
         self.pi05 = config.pi05
         self.model_path = config.model_path 
         self.num_value_bins = config.num_value_bins 
@@ -270,12 +276,12 @@ class Value(_model.BaseModel):
     @at.typecheck
     def build_z(self) -> tuple[at.Float[at.Array, "nb_atoms"], float]:
         """Build value support atoms for distributional value learning.
-        
+
         Args:
             Vmin: Minimum value in the support
             Vmax: Maximum value in the support
             nb_atoms: Number of atoms (bins) in the support
-            
+
         Returns:
             z: Array of value atoms [nb_atoms]
             dz: Step size between atoms
@@ -283,7 +289,70 @@ class Value(_model.BaseModel):
         dz = (self.Vmax - self.Vmin) / (self.num_value_bins - 1)
         z = jnp.arange(self.Vmin, self.Vmax + dz / 2, dz, dtype=jnp.float32)
         return z, dz
-    
+
+    def compute_value(
+        self, rng: at.KeyArrayLike, observation: _model.Observation, *, train: bool = False, value_targets: at.Float[at.Array, "b"] | None = None,
+    ) -> at.Float[at.Array, "*b ah"]:
+        """Compute value prediction for the given observation.
+
+        For value model, we only use prefix (images + state), no actions needed.
+        The actions parameter is kept for interface compatibility but not used.
+        """
+        preprocess_rng = jax.random.split(rng, 1)[0]
+        observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
+
+        # Only use prefix tokens (images + language), no suffix needed
+        # embed_prefix returns embeddings (3D), not token IDs (2D)
+        prefix_embeddings, inputs_mask, ar_mask = self.embed_prefix(observation)
+        # TODO: confirm the last input token can attend to all previous tokens
+        attn_mask = make_attn_mask(inputs_mask, ar_mask)
+        positions = jnp.cumsum(inputs_mask, axis=1) - 1
+
+        # Since prefix_embeddings is 3D embeddings (not token IDs), we need to call
+        # the underlying model's _apply_attention method directly.
+        from gemma.gm.nn._transformer import _Inputs
+
+        # Get the underlying Flax Linen model
+        underlying_model = self.ValueGemma.llm.module
+
+        # Get model parameters from NNX state
+        graphdef, state = nnx.split(self.ValueGemma.llm)
+        # state = state.unfreeze()
+        params_dict = state.to_pure_dict()
+        variables = {'params': params_dict}
+
+        # Create inputs for _apply_attention
+        inputs = _Inputs(
+            embeddings=prefix_embeddings,
+            positions=positions,
+            attention_mask=attn_mask,
+            inputs_mask=inputs_mask,
+        )
+
+        # Call _apply_attention
+        hidden_states, _ = underlying_model.apply(
+            variables,
+            inputs,
+            None,  # cache
+            method=underlying_model._apply_attention,
+        )
+
+        # Extract the output at the last valid position for each sequence
+        last_valid_positions = jnp.sum(inputs_mask, axis=1, dtype=jnp.int32) - 1  # Shape: (batch_size,)
+        batch_indices = jnp.arange(hidden_states.shape[0])
+
+        last_timestep_output = hidden_states[batch_indices, last_valid_positions, :]  # Shape: (batch_size, hidden_dim)
+
+        # Project through value head to get num_value_bins bins prediction
+        value_logits = self.value_head(last_timestep_output, return_expectation=False)  # Shape: (batch_size, num_value_bins)
+        value_probs = jax.nn.softmax(value_logits, axis=-1)  # Shape: (batch_size, num_value_bins)
+
+        # Build value support atoms (bins)
+        value_bins, _ = self.build_z()  # Shape: (num_value_bins,)
+        expected_values = jnp.sum(value_bins[None, :] * value_probs, axis=-1)  # Shape: (batch_size,)
+
+        return expected_values
+
     @override
     @at.typecheck
     def sample_actions(
@@ -309,3 +378,103 @@ class Value(_model.BaseModel):
         batch_size = observation.state.shape[0]
         return jnp.zeros((batch_size, self.action_horizon, self.action_dim), dtype=jnp.float32)
 
+
+class SimpleValue(Value):
+    def __init__(self, config: value_config.ValueConfig, rngs: nnx.Rngs):
+        _model.BaseModel.__init__(self, config.action_dim, config.action_horizon, config.max_token_len)
+        self.pi05 = config.pi05
+        self.model_path = config.model_path 
+        self.num_value_bins = config.num_value_bins 
+        # Hardcode config for gemma_3_270m (width=640) from Google DeepMind Gemma model
+        self.valuegemma_width = 640  # gemma_3_270m hidden size
+        self.Vmin = config.Vmin
+        self.Vmax = config.Vmax
+        
+        # Load Gemma model weights and return as ToNNX.
+        llm = build_gemma_3_270m_model(self.model_path)
+
+        img = nnx_bridge.ToNNX(
+            _siglip.Module(
+                num_classes=self.valuegemma_width,
+                variant="So400m/14",
+                pool_type="none",
+                scan=True,
+                dtype_mm=config.dtype,
+            )
+        )
+
+        # Initialize SigLIP with dummy image
+        img.lazy_init(next(iter(config.fake_obs().images.values())), train=False, rngs=rngs)
+        self.ValueGemma = nnx.Dict(llm=llm, img=img)
+
+        # Build value head: 3-layer MLP to project last timestep output to 201 bins
+        self.value_head = DistributionalValueHeadGemma3(
+            hidden_size=self.valuegemma_width,
+            num_bins=self.num_value_bins,
+            v_min=self.Vmin,
+            v_max=self.Vmax,
+            rngs=rngs
+        )
+        
+    def compute_value(
+        self, rng: at.KeyArrayLike, observation: _model.Observation,  *, train: bool = False,  value_targets: at.Float[at.Array, "b"] | None = None, 
+    ) -> at.Float[at.Array, "*b ah"]:
+        """Compute value.
+        
+        For value model, we only use prefix (images + state), no actions needed.
+        The actions parameter is kept for interface compatibility but not used.
+        """
+        preprocess_rng = jax.random.split(rng, 1)[0]
+        observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
+
+        # Only use prefix tokens (images + language), no suffix needed
+        # embed_prefix returns embeddings (3D), not token IDs (2D)
+        prefix_embeddings, inputs_mask, ar_mask = self.embed_prefix(observation)
+        # TODO: confirm the last input token can attend to all previous tokens 
+        attn_mask = make_attn_mask(inputs_mask, ar_mask)
+        positions = jnp.cumsum(inputs_mask, axis=1) - 1
+        
+        # Since prefix_embeddings is 3D embeddings (not token IDs), we need to call
+        # the underlying model's _apply_attention method directly.
+        from gemma.gm.nn._transformer import _Inputs
+
+        # Get the underlying Flax Linen model
+        underlying_model = self.ValueGemma.llm.module
+
+        # Get model parameters from NNX state
+        graphdef, state = nnx.split(self.ValueGemma.llm)
+        # state = state.unfreeze()
+        params_dict = state.to_pure_dict()
+        variables = {'params': params_dict}
+
+        # Create inputs for _apply_attention
+        inputs = _Inputs(
+            embeddings=prefix_embeddings,
+            positions=positions,
+            attention_mask=attn_mask,
+            inputs_mask=inputs_mask,
+        )
+
+        # Call _apply_attention
+        hidden_states, _ = underlying_model.apply(
+            variables,
+            inputs,
+            None,  # cache
+            method=underlying_model._apply_attention,
+        )
+        
+        # Extract the output at the last valid position for each sequence
+        last_valid_positions = jnp.sum(inputs_mask, axis=1, dtype=jnp.int32) - 1  # Shape: (batch_size,)
+        batch_indices = jnp.arange(hidden_states.shape[0])
+        
+        last_timestep_output = hidden_states[batch_indices, last_valid_positions, :]  # Shape: (batch_size, hidden_dim)
+        
+        # Project through value head to get num_value_bins bins prediction
+        value_logits = self.value_head(last_timestep_output, return_expectation=False)  # Shape: (batch_size, num_value_bins)
+        value_probs = jax.nn.softmax(value_logits, axis=-1)  # Shape: (batch_size, num_value_bins)
+        
+        # Build value support atoms (bins)
+        value_bins, _ = self.build_z()  # Shape: (num_value_bins,) 
+        expected_values = jnp.sum(value_bins[None, :] * value_probs, axis=-1)  # Shape: (batch_size,)
+
+        return expected_values

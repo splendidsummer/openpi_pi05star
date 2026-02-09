@@ -105,6 +105,27 @@ class Policy(BasePolicy):
         }
         return outputs
 
+    def infer_value(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+        # Make a copy since transformations may modify the inputs in place.
+        inputs = jax.tree.map(lambda x: x, obs)
+        inputs = self._input_transform(inputs)
+        if not self._is_pytorch_model:
+            # Make a batch and convert to jax.Array.
+            inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
+            self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
+        else:
+            # Convert inputs to PyTorch tensors and move to correct device.
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
+            sample_rng_or_pytorch_device = self._pytorch_device
+
+        observation = _model.Observation.from_dict(inputs)
+        if self._is_pytorch_model:
+            raise NotImplementedError("infer_value is only supported for JAX value models.")
+
+        value = self._model.compute_value(sample_rng_or_pytorch_device, observation, train=False)
+        value = np.asarray(value[0, ...])
+        return {"state_value": value}
+
     @property
     def metadata(self) -> dict[str, Any]:
         return self._metadata

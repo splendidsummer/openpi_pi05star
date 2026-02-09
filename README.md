@@ -138,6 +138,14 @@ uv run examples/libero/convert_libero_data_to_lerobot.py --data_dir /path/to/you
 
 **Note:** If you just want to fine-tune on LIBERO, you can skip this step, because our LIBERO fine-tuning configs point to a pre-converted LIBERO dataset. This step is merely an example that you can adapt to your own data.
 
+### 2. Evaluating the State Value and Calculate the Adv for Downloaded Datasets
+Note: if no *checkpoint_dir* and *data-dir* assigned, then the default values in code (*DEFAULT_PARQUET_PATH* & *DEFAULT_CHECKPOINT_DIR*) will be applied. 
+
+```bash 
+# takeuv run droid_inference_final.py \
+  --checkpoint_dir="/root/autodl-tmp/openpi_pi05star/checkpoints/pi05_droid_100_value/ \ experiment-20260208_135947/301"  \  --data_dir="/root/autodl-tmp/huggingface/lerobot/SummerZhang/droid_100"
+```
+
 ### 2. Defining training configs and running training
 
 To fine-tune a base model on your own data, you need to define configs for data processing and training. We provide example configs with detailed comments for LIBERO below, which you can modify for your own dataset:
@@ -158,7 +166,7 @@ uv run scripts/compute_norm_stats.py --config-name pi05_droid_100_value
 Now we can kick off training with the following command (the `--overwrite` flag is used to overwrite existing checkpoints if you rerun fine-tuning with the same config):
 
 ```bash
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero --exp-name=my_experiment --overwrite
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_droid_100_value --exp-name="experiment-$(date +%Y%m%d_%H%M%S)" 
 ```
 
 The command will log training progress to the console and save checkpoints to the `checkpoints` directory. You can also monitor training progress on the Weights & Biases dashboard. For maximally using the GPU memory, set `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9` before running training -- this enables JAX to use up to 90% of the GPU memory (vs. the default of 75%).

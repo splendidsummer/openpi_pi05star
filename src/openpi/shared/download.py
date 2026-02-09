@@ -23,7 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 def get_cache_dir() -> pathlib.Path:
-    cache_dir = pathlib.Path(os.getenv(_OPENPI_DATA_HOME, DEFAULT_CACHE_DIR)).expanduser().resolve()
+    env_value = os.getenv(_OPENPI_DATA_HOME)
+    # 如果环境变量指向 /tmp/openpi_cache，忽略它并使用默认值
+    if env_value and pathlib.Path(env_value).resolve() == pathlib.Path("/tmp/openpi_cache").resolve():
+        logger.warning(f"Ignoring OPENPI_DATA_HOME={env_value} as it points to /tmp/openpi_cache. Using default: {DEFAULT_CACHE_DIR}")
+        cache_dir = pathlib.Path(DEFAULT_CACHE_DIR).expanduser().resolve()
+    else:
+        cache_dir = pathlib.Path(os.getenv(_OPENPI_DATA_HOME, DEFAULT_CACHE_DIR)).expanduser().resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
     _set_folder_permission(cache_dir)
     return cache_dir

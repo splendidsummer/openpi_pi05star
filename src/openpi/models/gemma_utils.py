@@ -369,28 +369,49 @@ def get_token_embeddings(
     # DFS to collect 2D arrays as candidates
     candidates = []
 
-    def _visit(x):
+    def _visit(x, path=""):
         if isinstance(x, dict):
-            for v in x.values():
-                _visit(v)
+            for k, v in x.items():
+                _visit(v, path + "/" + k)
         else:
             try:
                 shape = getattr(x, "shape", None)
-                if shape is not None and len(shape) == 2:
-                    s0, s1 = int(shape[0]), int(shape[1])
-                    # prefer matrices where one dim is plausibly vocab size
-                    if max(s0, s1) >= min_vocab_threshold:
-                        candidates.append((x, (s0, s1)))
+                if shape is not None:
+                    # Debug print
+                    # print(f"DEBUG: Found array at {path} with shape {shape}")
+                    
+                    # Handle 2D arrays
+                    if len(shape) == 2:
+                        s0, s1 = int(shape[0]), int(shape[1])
+                        if max(s0, s1) >= min_vocab_threshold:
+                            candidates.append((x, (s0, s1)))
+                    # Handle 3D arrays that might be (1, vocab, dim)
+                    elif len(shape) == 3 and shape[0] == 1:
+                        s0, s1 = int(shape[1]), int(shape[2])
+                        if max(s0, s1) >= min_vocab_threshold:
+                            candidates.append((x, (s0, s1)))
             except Exception:
                 pass
 
     _visit(params)
 
     if not candidates:
+        import jax
+        print("DEBUG: Dumping all shapes found in params:")
+        def print_shape(p, x):
+             if hasattr(x, 'shape'):
+                 print(f"  {p}: {x.shape}")
+        jax.tree_util.tree_map_with_path(print_shape, params)
         raise ValueError("No 2D embedding-like matrix found in params.")
 
     # choose the most likely embedding (largest max dimension)
-    emb_array, (s0, s1) = max(candidates, key=lambda t: max(t[1]))
+    emb_param, (s0, s1) = max(candidates, key=lambda t: max(t[1]))
+    
+    # ensure it is 2D
+    emb_array = jnp.asarray(emb_param) 
+    if emb_array.ndim == 3 and emb_array.shape[0] == 1:
+        emb_array = jnp.squeeze(emb_array, axis=0)
+        s0, s1 = emb_array.shape
 
     # determine which axis is the vocab axis (the larger one)
     if s0 >= s1:

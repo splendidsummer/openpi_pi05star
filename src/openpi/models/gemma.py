@@ -52,7 +52,7 @@ class Config:
     lora_configs: dict[str, lora.LoRAConfig] = dataclasses.field(default_factory=dict)
 
 
-Variant = Literal["dummy", "gemma_300m", "gemma_300m_lora", "gemma_2b", "gemma_2b_lora", "gemma_3_270m"]
+Variant = Literal["dummy", "gemma_300m", "gemma_300m_lora", "gemma_2b", "gemma_2b_lora"]
 
 
 def get_config(variant: Variant) -> Config:
@@ -105,16 +105,6 @@ def get_config(variant: Variant) -> Config:
             num_kv_heads=1,
             head_dim=256,
             lora_configs={"attn": lora.LoRAConfig(rank=32, alpha=32.0), "ffn": lora.LoRAConfig(rank=32, alpha=32.0)},
-        )
-    if variant == "gemma_3_270m":
-        # 基于 Hugging Face config.json 的官方参数
-        return Config(
-            width=640,              # hidden_size (模型主干维度)
-            depth=18,               # num_hidden_layers
-            mlp_dim=2048,           # intermediate_size
-            num_heads=4,            # num_attention_heads
-            num_kv_heads=1,         # num_key_value_heads (使用 GQA/MQA)
-            head_dim=256,           # head_dim (注意：4 * 256 = 1024)
         )
     raise ValueError(f"Unknown variant: {variant}")
 
@@ -179,42 +169,6 @@ class Attention(nn.Module):
 
         dtype = next(x.dtype for x in xs if x is not None)  # original dtype, could be half-precision
 
-        # Debug: print shapes
-        # print(f"[DEBUG] Attention: xs shapes: {[x.shape if x is not None else None for x in xs]}")
-        # print(f"[DEBUG] Attention: positions shape: {positions.shape}")
-        # print(f"[DEBUG] Attention: attn_mask shape: {attn_mask.shape}")
-
-        # Check if inputs are flattened (batch*sequence flattened into first dimension)
-        # If x is 2D, we need to reshape to 3D using positions shape
-        reshaped_xs = []
-        need_reshape = False
-        for x in xs:
-            if x is not None and x.ndim == 2:
-                need_reshape = True
-                break
-
-        if need_reshape:
-            # Assume positions shape is (B, T)
-            B, T = positions.shape
-            for x in xs:
-                if x is None:
-                    reshaped_xs.append(None)
-                else:
-                    # Reshape from (B*T, D) to (B, T, D)
-                    assert x.shape[0] == B * T, f"Flattened dimension mismatch: x.shape[0]={x.shape[0]}, B*T={B*T}"
-                    D = x.shape[1]
-                    reshaped_xs.append(x.reshape(B, T, D))
-            xs = reshaped_xs
-            # positions and attn_mask remain same shape (B, T) and (B, 1, T, S)
-            # attn_mask shape should be (B, 1, T, S) where S is cache size
-            # We may need to adjust attn_mask if it's also flattened?
-            # For now assume it's already correct.
-            # We'll need to flatten outputs later before returning
-            flattened = True
-        else:
-            flattened = False
-            B = T = None
-
         qkvs = []
         for i, (x, config) in enumerate(zip(xs, self.configs, strict=True)):
             if x is None:
@@ -234,7 +188,7 @@ class Attention(nn.Module):
                     init_fn=nn.initializers.lecun_normal(in_axis=-2, out_axis=-1, batch_axis=(0,)),
                     lora_config=config.lora_configs.get("attn"),
                 )
-                q = q_einsum("BSD,NDH->BTNH", x)
+                q = q_einsum("BTD,NDH->BTNH", x)
                 kv_einsum = lora.Einsum(
                     shape=(2, config.num_kv_heads, config.width, config.head_dim),
                     name=_name("kv_einsum", i),
@@ -291,22 +245,6 @@ class Attention(nn.Module):
                 start = end
             else:
                 out.append(None)
-
-        if flattened:
-            # Flatten outputs back to 2D
-            flattened_out = []
-            for tensor in out:
-                if tensor is None:
-                    flattened_out.append(None)
-                else:
-                    # Reshape from (B, T, D) to (B*T, D)
-                    flattened_out.append(tensor.reshape(-1, tensor.shape[-1]))
-            out = flattened_out
-            # Flatten k and v for cache
-            # k shape: (B, S, K, H), v shape: (B, S, K, H)
-            # Flatten first two dimensions
-            k = k.reshape(-1, *k.shape[2:])
-            v = v.reshape(-1, *v.shape[2:])
 
         return out, (k, v)
 
@@ -471,6 +409,52 @@ class Module(nn.Module):
         return [
             f(e, a)[0] if e is not None else e for f, e, a in zip(self.final_norms, embedded, adarms_cond, strict=True)
         ], kv_cache
+
+    @at.typecheck
+    def forward_first_expert(
+        self,
+        embedded: at.Float[at.Array, "b _t _d"],
+        positions: at.Int[at.Array, "b t"],
+        mask: at.Bool[at.Array, "b t s"],
+        adarms_cond: at.Float[at.Array, "b _d"] | None = None,
+        *,
+        kv_cache: KVCache | None = None,
+        deterministic: bool = True,
+        return_logits: bool = False,
+    ) -> tuple[at.Float[at.Array, "b _t _d"], KVCache]:
+        """Forward pass using only the first expert.
+
+        Args:
+            embedded: Input embeddings for the first expert with shape [batch, seq_len, width].
+            positions: Position indices for each token with shape [batch, seq_len].
+            mask: Attention mask with shape [batch, query_len, key_len].
+            adarms_cond: Optional AdaRMS conditioning vector for the first expert.
+            kv_cache: Optional KV cache for autoregressive decoding.
+            deterministic: Whether to apply dropout.
+            return_logits: If True, return logits after vocabulary projection.
+                If False, return pre-logits (output after final norm).
+
+        Returns:
+            If return_logits=False: pre-logits with shape [batch, seq_len, width] and KV cache.
+            If return_logits=True: logits with shape [batch, seq_len, vocab_size] and KV cache.
+        """
+        # Create input list with first expert embedded and None for others
+        embedded_list = [embedded] + [None] * (len(self.configs) - 1)
+        adarms_cond_list = [adarms_cond] + [None] * (len(self.configs) - 1)
+        outputs, kv_cache = self(
+            embedded_list,
+            positions,
+            mask,
+            adarms_cond_list,
+            kv_cache=kv_cache,
+            deterministic=deterministic,
+        )
+        # outputs[0] is the first expert's output (after final norm)
+        pre_logits = outputs[0]
+        if return_logits:
+            logits = self.embedder.decode(pre_logits)
+            return logits, kv_cache
+        return pre_logits, kv_cache
 
     def init(self, use_adarms: Sequence[bool]):
         """Convenience method for initializing all parameters, necessary due to the quirks of linen."""

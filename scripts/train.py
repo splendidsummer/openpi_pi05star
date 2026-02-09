@@ -392,7 +392,8 @@ def main(config: _config.TrainConfig):
         batch = next(data_iter)
 
         # 定期保存检查点
-        if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
+        # if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
+        if (step % config.save_interval == 0) or step == config.num_train_steps - 1:  
             _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)
 
     logging.info("Waiting for checkpoint manager to finish")

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class ValueConfig(_model.BaseModelConfig):
     dtype: str = "bfloat16"
     paligemma_variant: _gemma.Variant = "gemma_3_270m"
+    # TODO: tune this value accordingly
     num_value_bins: int = 201  
     model_path: str = "path/to/gemma3_270m/model"
     # Set the model specific defaults.
@@ -47,7 +48,7 @@ class ValueConfig(_model.BaseModelConfig):
         from openpi.models.value import Value
 
         return Value(self, rngs=nnx.Rngs(rng))
-
+    
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
@@ -129,3 +130,14 @@ class ValueConfig(_model.BaseModelConfig):
             # For now, if unfreeze_last_n_layers > 0, don't freeze SigLIP
             # (all parameters will be trainable)
             return nnx.Nothing
+
+
+@dataclasses.dataclass(frozen=True)
+class ValueInferenceConfig(ValueConfig):
+    
+    @override
+    def create(self, rng: at.KeyArrayLike) -> "Value":
+        from openpi.models.value import Value
+
+        return Value(self, rngs=nnx.Rngs(rng))
+    

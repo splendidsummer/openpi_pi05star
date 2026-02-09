@@ -14,6 +14,7 @@ from typing_extensions import override
 import tyro
 
 import openpi.models.model as _model
+import openpi.models.pi05_star_config as pi05_star_config
 import openpi.models.pi0_config as pi0_config
 import openpi.models.value_config as value_config
 import openpi.models.pi0_fast as pi0_fast
@@ -177,7 +178,20 @@ class ModelTransformFactory(GroupFactory):
                         _transforms.PadStatesAndActions(model_config.action_dim),
                     ],
                 )
-
+                
+            case _model.ModelType.PI05_STAR:
+                assert isinstance(model_config, pi05_star_config.Pi05_STAR_Config)
+                return _transforms.Group(
+                    inputs=[
+                        _transforms.InjectDefaultPrompt(self.default_prompt),
+                        _transforms.ResizeImages(224, 224),
+                        _transforms.TokenizeStarPrompt(
+                            _tokenizer.PaliGemmaStarTokenizer(model_config.fast_max_token_len, model_config.star_max_token_len),
+                            discrete_state_input=model_config.discrete_state_input,
+                        ),
+                        _transforms.PadStatesAndActions(model_config.action_dim),
+                    ],
+                )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -198,24 +212,55 @@ class DataConfigFactory(abc.ABC):
     def create_base_config(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repo_id = self.repo_id if self.repo_id is not tyro.MISSING else None
         asset_id = self.assets.asset_id or repo_id
+        assets_dir_override = epath.Path(self.assets.assets_dir) if self.assets.assets_dir else None
+        norm_stats = self._load_norm_stats(
+            assets_dirs=epath.Path(assets_dirs),
+            assets_dir_override=assets_dir_override,
+            asset_id=self.assets.asset_id,
+            repo_id=repo_id,
+        )
         return dataclasses.replace(
             self.base_config or DataConfig(),
             repo_id=repo_id,
             asset_id=asset_id,
-            norm_stats=self._load_norm_stats(epath.Path(self.assets.assets_dir or assets_dirs), asset_id),
+            norm_stats=norm_stats,
             use_quantile_norm=model_config.model_type != ModelType.PI0,
         )
 
-    def _load_norm_stats(self, assets_dir: epath.Path, asset_id: str | None) -> dict[str, _transforms.NormStats] | None:
-        if asset_id is None:
-            return None
-        try:
-            data_assets_dir = str(assets_dir / asset_id)
-            norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
-            logging.info(f"Loaded norm stats from {data_assets_dir}")
-            return norm_stats
-        except FileNotFoundError:
-            logging.info(f"Norm stats not found in {data_assets_dir}, skipping.")
+    def _load_norm_stats(
+        self,
+        *,
+        assets_dirs: epath.Path,
+        assets_dir_override: epath.Path | None,
+        asset_id: str | None,
+        repo_id: str | None,
+    ) -> dict[str, _transforms.NormStats] | None:
+        candidates: list[epath.Path] = []
+
+        if assets_dir_override is not None:
+            if asset_id is not None:
+                candidates.append(assets_dir_override / asset_id)
+            else:
+                candidates.append(assets_dir_override)
+                if repo_id is not None:
+                    candidates.append(assets_dir_override / repo_id)
+        else:
+            if asset_id is not None:
+                candidates.append(assets_dirs / asset_id)
+            elif repo_id is not None:
+                candidates.append(assets_dirs / repo_id)
+            else:
+                return None
+
+        for candidate in candidates:
+            try:
+                data_assets_dir = str(candidate)
+                norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
+                logging.info(f"Loaded norm stats from {data_assets_dir}")
+                return norm_stats
+            except FileNotFoundError:
+                logging.info(f"Norm stats not found in {candidate}, skipping.")
+
         return None
 
 
@@ -441,7 +486,7 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
     To convert your custom DROID dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
     """
     
-    data_dir: str | None = None 
+    data_dir: str | None = None
     
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -511,6 +556,53 @@ class LeRobotDROIDValueDataConfig(DataConfigFactory):
                 # Note: state_value is already computed in the dataset, no need to compute on-the-fly
             ],
             # TODO: to recheck the output here if we dont need any transform
+            # outputs=[droid_policy.DroidOutputs()],
+        )
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotDROIDStarDataConfig(DataConfigFactory):
+    """
+    Example data config for custom DROID dataset in LeRobot format.
+    To convert your custom DROID dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
+    """
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/exterior_image_1_left": "exterior_image_1_left",
+                        "observation/exterior_image_2_left": "exterior_image_2_left",
+                        "observation/wrist_image_left": "wrist_image_left",
+                        # I suppose the [joint_positions, gripper_position] concatenated to state inputs   
+                        "observation/joint_position": "joint_position",
+                        "observation/gripper_position": "gripper_position",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                        # Include episode metadata for value computation
+                        # "reward": "reward",
+                        "adv_indicator": "adv_indicator"
+                    }
+                )
+            ]
+        )
+        # We assume joint *velocity* actions, so we should *not* apply an additional delta transform.
+        data_transforms = _transforms.Group(
+            inputs=[
+                droid_policy.DroidInputs(model_type=model_config.model_type),
+                # Note: state_value is already computed in the dataset, no need to compute on-the-fly
+            ],
+            # TODO: to confirm this output transform is only needed when sampling actions. 
             # outputs=[droid_policy.DroidOutputs()],
         )
         model_transforms = ModelTransformFactory()(model_config)
@@ -687,6 +779,7 @@ _CONFIGS = [
             ),
         ),
     ),
+    
     TrainConfig(
         name="pi05_droid",
         model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
@@ -701,6 +794,46 @@ _CONFIGS = [
             ),
         ),
     ),
+
+    
+    TrainConfig(
+        name="pi05_droid_value",
+        model=value_config.ValueInferenceConfig(
+            model_path="/root/autodl-tmp/gemma-3-270m", 
+            action_horizon= 15, 
+            max_token_len=200, 
+            pi05=True),
+        data=SimpleDataConfig(
+            repo_id = "SummerZhang/droid_100", 
+            assets=AssetsConfig(
+                assets_dir="/root/autodl-tmp/openpi_pi05star/assets/pi05_droid_100_value",
+                asset_id="SummerZhang/droid_100",
+            ),                                                          
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[droid_policy.DroidInputs(model_type=ModelType.VALUE)],
+                # outputs=[droid_policy.DroidOutputs()],
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                repack_transforms=_transforms.Group(
+                    inputs=[
+                        _transforms.RepackTransform(
+                            {
+                                "observation/exterior_image_1_left": "exterior_image_1_left",
+                                "observation/exterior_image_2_left": "exterior_image_2_left",
+                                "observation/wrist_image_left": "wrist_image_left",
+                                "observation/joint_position": "joint_position",
+                                "observation/gripper_position": "gripper_position",
+                                "actions": "actions",
+                                "prompt": "prompt",
+                            }
+                        )
+                    ]
+                ),
+            ),
+        ),
+    ),
+
     #
     # Fine-tuning Libero configs.
     #
@@ -1034,12 +1167,12 @@ _CONFIGS = [
             assets=AssetsConfig(
                 # Important: reuse the original DROID norm stats during fine-tuning!
                 # assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
-                asset_id="droid",
+                # asset_id="droid",
             ),
         ),
         # For testing: use NoOpWeightLoader to skip weight loading and train from scratch
         # TODO: Create proper SIGLIP checkpoint with hidden_size=640 for Gemma-3-270m
-        weight_loader=weight_loaders.SIGLIPOnlyWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
+        weight_loader=weight_loaders.SIGLIPOnlyWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         # 解冻所有参数（LLM 和 SigLIP 都训练）
         freeze_filter=nnx.Nothing,  # 不冻结任何参数
         # 多学习率配置：为不同参数组设置不同的学习率
@@ -1075,7 +1208,37 @@ _CONFIGS = [
         fsdp_devices=1,
     ),
 
-    
+    TrainConfig(
+        # This config is for fine-tuning pi05-DROID on a custom (smaller) DROID dataset.
+        # Here, we use LeRobot data format (like for all other fine-tuning examples)
+        # To convert your custom DROID dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
+        name="pi05_droid_star",
+        model=pi05_star_config.Pi05_STAR_Config(
+            pi05=True,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotDROIDStarDataConfig(
+            repo_id="SummerZhang/droid_100",
+            # data_dir = "/root/autodl-tmp/droid_100", 
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                # Important: reuse the original DROID norm stats during fine-tuning!
+                # assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
+
+            ),
+        ),
+        
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=20_000,
+        batch_size=2,
+        log_interval=100,
+        save_interval=5000,
+        keep_period=10_000,  #  TODO: adjust based on num_train_steps? 
+        fsdp_devices=1,
+
+    ),
+
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
     #
