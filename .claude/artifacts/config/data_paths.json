@@ -1,0 +1,7 @@
+{
+  "raw_dataset_path": "/home/summer/Projects/openpi_old/.claude/artifacts/mock_raw",
+  "processed_dataset_path": "/home/summer/Projects/openpi_old/.claude/artifacts/build/processed_dataset",
+  "norm_stats_path": "/home/summer/Projects/openpi_old/.claude/artifacts/build/norm_stats.json",
+  "checkpoint_path": "/home/summer/Projects/openpi_old/.claude/artifacts/run/checkpoints",
+  "evaluation_output_path": "/home/summer/Projects/openpi_old/.claude/artifacts/run/evaluation"
+}

@@ -34,7 +34,7 @@ class ValueConfig(_model.BaseModelConfig):
     # This config option is not used directly by the model, but it is read by the ModelTransformFactory.
     discrete_state_input: bool = None  # type: ignore
     
-    Vmin: float = -199.0
+    Vmin: float = -1.0 
     Vmax: float = 0.0
 
     @override

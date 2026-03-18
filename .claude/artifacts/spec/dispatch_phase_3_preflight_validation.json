@@ -1,0 +1,55 @@
+{
+  "phase_id": "phase_3_preflight_validation",
+  "mode": "parallel",
+  "gate_on_complete": "gate_C_release_ready",
+  "layers": [
+    {
+      "layer": 1,
+      "tasks": [
+        {
+          "id": "t3_1",
+          "agent": "module_tester",
+          "agent_cli_name": "module-tester",
+          "action": "dummy-data与shape与前向验证",
+          "needs": [
+            "t2_1",
+            "t2_2"
+          ],
+          "produces": [
+            ".claude/artifacts/build/module_validation_report.json"
+          ],
+          "dispatch_prompt": "执行任务 t3_1: dummy-data与shape与前向验证。读取 docs/agent_orchestration/task_templates.yaml 中 module_tester 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        },
+        {
+          "id": "t3_2",
+          "agent": "safety_validator",
+          "agent_cli_name": "safety-validator",
+          "action": "归一化空间+原始空间安全规则验证",
+          "needs": [
+            "t2_2",
+            "t2_4"
+          ],
+          "produces": [
+            ".claude/artifacts/build/safety_config.json"
+          ],
+          "dispatch_prompt": "执行任务 t3_2: 归一化空间+原始空间安全规则验证。读取 docs/agent_orchestration/task_templates.yaml 中 safety_validator 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        },
+        {
+          "id": "t3_3",
+          "agent": "integration_tester",
+          "agent_cli_name": "integration-tester",
+          "action": "端到端最小链路测试",
+          "needs": [
+            "t2_1",
+            "t2_3",
+            "t2_4"
+          ],
+          "produces": [
+            ".claude/artifacts/build/integration_report.json"
+          ],
+          "dispatch_prompt": "执行任务 t3_3: 端到端最小链路测试。读取 docs/agent_orchestration/task_templates.yaml 中 integration_tester 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        }
+      ]
+    }
+  ]
+}

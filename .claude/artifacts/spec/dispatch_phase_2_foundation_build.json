@@ -1,0 +1,66 @@
+{
+  "phase_id": "phase_2_foundation_build",
+  "mode": "parallel",
+  "gate_on_complete": null,
+  "layers": [
+    {
+      "layer": 1,
+      "tasks": [
+        {
+          "id": "t2_1",
+          "agent": "data_loader",
+          "agent_cli_name": "data-loader",
+          "action": "实现0-5步数据变换流水线",
+          "needs": [
+            "t1_1",
+            "t1_2"
+          ],
+          "produces": [
+            ".claude/artifacts/build/transform_pipeline.json"
+          ],
+          "dispatch_prompt": "执行任务 t2_1: 实现0-5步数据变换流水线。读取 docs/agent_orchestration/task_templates.yaml 中 data_loader 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        },
+        {
+          "id": "t2_2",
+          "agent": "normalizer",
+          "agent_cli_name": "normalizer",
+          "action": "生成PI0/PI05归一化统计",
+          "needs": [
+            "t1_1",
+            "t1_2"
+          ],
+          "produces": [
+            ".claude/artifacts/build/norm_stats.json"
+          ],
+          "dispatch_prompt": "执行任务 t2_2: 生成PI0/PI05归一化统计。读取 docs/agent_orchestration/task_templates.yaml 中 normalizer 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        },
+        {
+          "id": "t2_3",
+          "agent": "training_dev",
+          "agent_cli_name": "training-dev",
+          "action": "生成训练脚本和配置",
+          "needs": [
+            "t1_1"
+          ],
+          "produces": [
+            ".claude/artifacts/build/train_plan.json"
+          ],
+          "dispatch_prompt": "执行任务 t2_3: 生成训练脚本和配置。读取 docs/agent_orchestration/task_templates.yaml 中 training_dev 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        },
+        {
+          "id": "t2_4",
+          "agent": "inference_dev",
+          "agent_cli_name": "inference-dev",
+          "action": "生成推理服务和反归一化链路",
+          "needs": [
+            "t1_1"
+          ],
+          "produces": [
+            ".claude/artifacts/build/infer_plan.json"
+          ],
+          "dispatch_prompt": "执行任务 t2_4: 生成推理服务和反归一化链路。读取 docs/agent_orchestration/task_templates.yaml 中 inference_dev 模板，仅输出契约要求的 JSON，并写入产物路径。"
+        }
+      ]
+    }
+  ]
+}

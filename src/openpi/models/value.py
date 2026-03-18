@@ -1,33 +1,23 @@
 import logging
-
 import einops
 import flax.nnx as nnx
 import flax.nnx.bridge as nnx_bridge
 import jax
 import jax.numpy as jnp
+
 from typing_extensions import override
 
 from openpi.models import model as _model
 from openpi.models import pi0_config
 import openpi.models.value_config as value_config
-# import openpi.models.gemma as _gemma  # Not using openpi gemma model per user request
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
+
 # Ensure we import Google's gemma library, not local gemma.py
-import sys
-if 'gemma' in sys.modules:
-    # Check if it's the local gemma module
-    module = sys.modules['gemma']
-    if hasattr(module, '__file__') and 'src/openpi/models' in module.__file__:
-        del sys.modules['gemma']
 import gemma.gm as gm
 from openpi.models.gemma_utils import build_gemma_3_270m_model, get_token_embeddings
 
 logger = logging.getLogger("openpi")
-
-
-from flax import nnx
-import jax.numpy as jnp
 
 
 class DistributionalValueHeadGemma3(nnx.Module):
@@ -268,10 +258,10 @@ class Value(_model.BaseModel):
         value_bins, _ = self.build_z()  # Shape: (num_value_bins,) 
         expected_value = jnp.sum(value_bins[None, :] * value_probs, axis=-1)  # Shape: (batch_size,)
         
-        # Compute value loss (MSE between predicted and target values)
-        loss = jnp.square(expected_value - value_targets)
+        # Compute value loss (MAE between predicted and target values)
+        loss = jnp.abs(expected_value - value_targets) 
 
-        return loss
+        return loss, expected_value 
 
     @at.typecheck
     def build_z(self) -> tuple[at.Float[at.Array, "nb_atoms"], float]:

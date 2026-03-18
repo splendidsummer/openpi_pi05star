@@ -118,6 +118,8 @@ class Normalize(DataTransformFn):
     use_quantiles: bool = False
     # If true, will raise an error if any of the keys in the norm stats are not present in the data.
     strict: bool = False
+    # Keys to skip during normalization (already in correct range)
+    SKIP_NORMALIZATION_KEYS = frozenset(["value_targets"])
 
     def __post_init__(self):
         if self.norm_stats is not None and self.use_quantiles:
@@ -127,9 +129,15 @@ class Normalize(DataTransformFn):
         if self.norm_stats is None:
             return data
 
+        # Filter out keys that should not be normalized
+        filtered_norm_stats = {
+            k: v for k, v in self.norm_stats.items()
+            if k not in self.SKIP_NORMALIZATION_KEYS
+        }
+
         return apply_tree(
             data,
-            self.norm_stats,
+            filtered_norm_stats,
             self._normalize_quantile if self.use_quantiles else self._normalize,
             strict=self.strict,
         )

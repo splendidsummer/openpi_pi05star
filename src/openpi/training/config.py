@@ -562,6 +562,7 @@ class LeRobotDROIDValueDataConfig(DataConfigFactory):
 
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
+            data_dir=self.data_dir,
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
@@ -1161,7 +1162,7 @@ _CONFIGS = [
         ),
         data=LeRobotDROIDValueDataConfig(
             # Replace with your custom DROID LeRobot dataset repo id.
-            repo_id="SummerZhang/droid_100",
+            repo_id="local_pkl_dataset_rewards",
             data_dir = "/root/autodl-tmp/droid_100", 
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
@@ -1206,6 +1207,69 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=4,
         fsdp_devices=1,
+    ),
+
+    TrainConfig(
+        # This config is for training Value model on local DROID dataset with state_value labels
+        name="pi05_local_droid_value",
+        model=value_config.ValueConfig(
+            pi05=True,
+            model_path="/root/autodl-tmp/gemma-3-270m",
+            # Value range based on full dataset (33,865 frames, 100 episodes):
+            # min=-1.0, max=0.0, mean=-0.54, median=-0.45
+            Vmin=-1.0,  # Dataset minimum state_value
+            Vmax=0.0,   # Dataset maximum state_value
+            action_dim=32,  # Standard DROID action dim (8 real + 24 padding)
+            action_horizon=16,
+        ),
+        data=LeRobotDROIDValueDataConfig(
+            repo_id="local_pkl_dataset",
+            data_dir="/root/autodl-tmp/huggingface/lerobot/local_pkl_dataset",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                # Compute norm stats first using: uv run scripts/compute_norm_stats.py --config-name pi05_local_droid_value
+            ),
+        ),
+        # Load pre-trained SigLIP weights from pi05_base checkpoint
+        weight_loader=weight_loaders.SIGLIPOnlyWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        # Train all parameters (LLM, SigLIP, and value_head)
+        freeze_filter=nnx.Nothing,
+        # Multi learning rate configuration with cosine decay
+        lr_schedule=_optimizer.MultiLRScheduleConfig(
+            param_lr_schedules={
+                "siglip": _optimizer.CosineDecaySchedule(
+                    warmup_steps=1_000,
+                    peak_lr=1e-5,  # SigLIP learning rate
+                    decay_steps=20_000,  # Match training steps for proper decay
+                    decay_lr=1e-6,  # Decay to 10% of peak
+                ),
+                "llm": _optimizer.CosineDecaySchedule(
+                    warmup_steps=1_000,
+                    peak_lr=5e-5,  # LLM learning rate (5x SigLIP)
+                    decay_steps=20_000,  # Match training steps for proper decay
+                    decay_lr=5e-6,  # Decay to 10% of peak
+                ),
+                "value_head": _optimizer.CosineDecaySchedule(
+                    warmup_steps=1_000,
+                    peak_lr=8e-5,  # Value head learning rate (8x SigLIP)
+                    decay_steps=20_000,  # Match training steps for proper decay
+                    decay_lr=8e-6,  # Decay to 10% of peak
+                ),
+            },
+            param_masks={
+                "siglip": nnx_utils.PathRegex(".*ValueGemma/img/.*"),
+                "llm": nnx_utils.PathRegex(".*ValueGemma/llm/.*"),
+                "value_head": nnx_utils.PathRegex(".*value_head/.*"),
+            },
+        ),
+        # Add gradient clipping to prevent gradient explosion
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        num_train_steps=20_000,
+        batch_size=16,
+        fsdp_devices=1,
+        log_interval=100,
+        save_interval=5000,
+        keep_period=10_000,
     ),
 
     TrainConfig(

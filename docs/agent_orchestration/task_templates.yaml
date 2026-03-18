@@ -1,0 +1,270 @@
+version: "0.3.0-exec-draft"
+
+# 任务模板：统一多智能体输入输出，减少沟通损耗
+# 使用方式：每个 agent 启动时，从对应模板复制一份任务实例并填充字段
+
+templates:
+  model_architect:
+    required_inputs:
+      - task_requirements
+      - target_platform
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/spec/model_config.json"
+      required_fields:
+        - model_type
+        - max_token_len
+        - discrete_state_input
+        - action_horizon
+        - action_dim
+    done_criteria:
+      - "模型类型与平台绑定关系明确"
+      - "关键超参可被 training_dev 直接消费"
+
+  data_explorer:
+    required_inputs:
+      - data_paths_config  # 来自 phase_0_5_user_config 的 data_paths.json
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/spec/data_report.json"
+      required_fields:
+        - sample_count
+        - anomaly_summary
+        - modality_stats
+        - source_dataset_path  # 记录实际分析的数据集路径
+        - quality_checks.zero_variance_dims
+        - quality_checks.nan_count
+        - action_analysis.smoothness
+        - action_analysis.active_dims
+        - action_analysis.low_activity_dims
+    done_criteria:
+      - "异常样本与缺失模式有清单"
+      - "下游 normalizer 能直接读取统计"
+      - "零方差维度被明确标注"
+    input_resolution:
+      - "从 .claude/artifacts/config/data_paths.json 读取 raw_dataset_path"
+      - "验证路径存在后开始分析"
+
+  data_loader:
+    required_inputs:
+      - data_paths_config  # 来自 phase_0_5_user_config
+      - model_config
+      - data_report
+      - norm_stats
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/transform_pipeline.json"
+      required_fields:
+        - step_0_repack
+        - step_1_droid_inputs
+        - step_2_normalize
+        - step_3_resize
+        - step_4_tokenize
+        - step_5_pad
+        - input_dataset_path  # 记录输入路径
+        - output_dataset_path  # 记录输出路径
+        - dimension_mapping.zero_variance_dims
+    done_criteria:
+      - "流水线顺序固定且可复现"
+      - "PI0/PI05/PI0_FAST分支清晰"
+      - "正确消费 data_report 中的维度标注"
+    input_resolution:
+      - "从 .claude/artifacts/config/data_paths.json 读取 raw_dataset_path 和 processed_dataset_path"
+      - "从 data_report 读取 zero_variance_dims 和 low_activity_dims"
+      - "从 norm_stats 读取 skip_normalization_dims"
+      - "创建输出目录（如不存在）"
+
+  normalizer:
+    required_inputs:
+      - data_paths_config  # 来自 phase_0_5_user_config
+      - model_type
+      - data_report
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/norm_stats.json"
+      required_fields:
+        - use_quantile_norm
+        - state_stats
+        - action_stats
+        - output_path  # 记录归一化文件的实际输出路径
+        - state_stats.skip_normalization_dims
+        - action_stats.skip_normalization_dims
+        - state_stats.low_activity_dims
+        - action_stats.low_activity_dims
+    done_criteria:
+      - "PI05/PI0_FAST使用quantile"
+      - "PI0使用z-score"
+      - "零方差维度正确跳过"
+    input_resolution:
+      - "从 .claude/artifacts/config/data_paths.json 读取 raw_dataset_path 和 norm_stats_path"
+      - "从 data_report 读取 zero_variance_dims"
+      - "将 norm_stats.json 输出到用户指定的 norm_stats_path"
+
+  post_normalization_validator:
+    required_inputs:
+      - data_paths_config
+      - norm_stats
+      - data_report
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/post_norm_validation.json"
+      required_fields:
+        - validation_status
+        - processed_dataset_path
+        - nan_inf_check.state.nan_count
+        - nan_inf_check.action.nan_count
+        - nan_inf_check.state.inf_count
+        - nan_inf_check.action.inf_count
+        - normalization_effect.state.target_range_achieved
+        - normalization_effect.action.target_range_achieved
+        - smoothness_check.smoothness_preserved
+        - completeness_check.sample_count_consistent
+    done_criteria:
+      - "NaN/Inf 检查通过（数量为 0）"
+      - "归一化效果符合预期"
+      - "动作连续性保持良好"
+    input_resolution:
+      - "读取 processed_dataset_path 和归一化后的数据"
+      - "与原始 data_report 中的 smoothness 指标对比"
+      - "验证 skip_normalization_dims 是否保持不变"
+
+  module_tester:
+    required_inputs:
+      - transform_pipeline
+      - model_config
+      - post_norm_validation  # 新增依赖
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/module_validation_report.json"
+      required_fields:
+        - forward_pass_ok
+        - shape_validation
+        - dummy_data_validation
+    done_criteria:
+      - "核心shape全部通过"
+      - "前向无阻断错误"
+
+  training_dev:
+    required_inputs:
+      - model_config
+      - norm_config
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/train_plan.json"
+      required_fields:
+        - optimizer
+        - scheduler
+        - checkpoint_policy
+    done_criteria:
+      - "训练脚本可执行"
+      - "checkpoint策略可恢复"
+
+  inference_dev:
+    required_inputs:
+      - model_config
+      - norm_stats
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/infer_plan.json"
+      required_fields:
+        - load_strategy
+        - unnormalize_path
+        - serving_interface
+    done_criteria:
+      - "反归一化链路可验证"
+      - "WebSocket接口可被client调用"
+
+  integration_tester:
+    required_inputs:
+      - train_plan
+      - infer_plan
+      - transform_pipeline
+      - post_norm_validation  # 新增依赖
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/integration_report.json"
+      required_fields:
+        - e2e_status
+        - perf_baseline
+        - blockers
+    done_criteria:
+      - "端到端最小链路通过"
+      - "阻断项可定位到责任模块"
+
+  safety_validator:
+    required_inputs:
+      - norm_stats
+      - model_config
+      - post_norm_validation  # 新增依赖
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/build/safety_config.json"
+      required_fields:
+        - normalized_bounds
+        - raw_joint_limits
+        - emergency_stop_policy
+    done_criteria:
+      - "归一化空间与原始空间均有检查"
+      - "触发条件与阻断策略明确"
+
+  training_runner:
+    required_inputs:
+      - train_plan
+      - integration_report
+      - safety_config
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/run/checkpoints/latest.ckpt"
+      required_fields:
+        - global_step
+        - latest_ckpt_path
+        - train_status
+    done_criteria:
+      - "至少产出1个可评估checkpoint"
+
+  evaluation_agent:
+    required_inputs:
+      - checkpoint
+      - eval_protocol
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/run/evaluation/latest_metrics.json"
+      required_fields:
+        - success_rate
+        - safety_events
+        - regressions
+    done_criteria:
+      - "输出可用于发布决策"
+
+  inference_deployer:
+    required_inputs:
+      - infer_plan
+      - checkpoint
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/run/deploy/latest_status.json"
+      required_fields:
+        - endpoint
+        - latency_p50
+        - latency_p95
+        - healthcheck
+    done_criteria:
+      - "影子部署成功"
+      - "关键延迟指标可用"
+
+  debug_agent:
+    required_inputs:
+      - failure_event
+      - logs
+      - artifacts
+    output_contract:
+      required_artifacts:
+        - ".claude/artifacts/run/regression_backlog.json"
+      required_fields:
+        - root_cause_candidates
+        - confidence
+        - fix_owner
+        - rerun_scope
+    done_criteria:
+      - "修复任务可直接执行"
+      - "重跑范围最小化"

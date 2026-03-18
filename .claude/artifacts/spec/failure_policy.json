@@ -1,0 +1,533 @@
+{
+  "version": "0.3.0",
+  "project": "openpi_pi05star",
+  "last_updated": "2026-03-07T00:00:00Z",
+  "status": "success",
+  "summary": "失败分类、重试与回滚策略初始化完成",
+  "artifacts": [".claude/artifacts/spec/failure_policy.json"],
+  "metrics": {
+    "max_retries": 2,
+    "failure_categories": ["data", "model", "training", "deployment", "safety"],
+    "rollback_strategy": "phase_local",
+    "resume_supported": true
+  },
+  "next_actions": ["监控后续任务执行，处理失败事件"],
+  "failure_policy": {
+    "on_task_failed": {
+      "max_retries": 2,
+      "route_to": "debug_agent",
+      "classify_by": ["data", "model", "training", "deployment", "safety"],
+      "retry_delay_seconds": 30,
+      "backoff_multiplier": 2.0
+    },
+    "rollback": {
+      "strategy": "phase_local",
+      "description": "仅回滚失败phase及其下游，不重置全链路",
+      "preserve_artifacts": true,
+      "cleanup_intermediate": false
+    },
+    "resume": {
+      "allowed": true,
+      "from_artifacts": true,
+      "checkpoints_required": true
+    }
+  },
+  "failure_categories": {
+    "data": {
+      "description": "数据加载、处理、归一化相关的失败",
+      "severity": "high",
+      "typical_scenarios": [
+        "LeRobot数据集加载失败（网络问题、权限错误）",
+        "数据格式不匹配（parquet损坏、字段缺失）",
+        "归一化统计计算失败（数据为空、数值溢出）",
+        "Transform pipeline执行失败（图像尺寸不匹配、类型错误）",
+        "数据集路径不存在或不可访问",
+        "内存不足导致数据加载失败"
+      ],
+      "diagnostic_checks": [
+        "检查HuggingFace缓存完整性",
+        "验证parquet文件格式和字段",
+        "检查磁盘空间和权限",
+        "验证数据集结构是否符合schema",
+        "检查归一化统计中的异常值（std=0, q01=q99）"
+      ],
+      "recovery_actions": [
+        "重新下载或修复损坏的数据文件",
+        "重新运行compute_norm_stats.py",
+        "调整数据加载配置（batch_size, num_workers）",
+        "清理并重建HuggingFace缓存",
+        "验证数据路径配置"
+      ],
+      "rerun_scope": ["phase_2_foundation_build", "phase_3_preflight_validation"],
+      "preventive_measures": [
+        "数据完整性预检脚本",
+        "缓存验证机制",
+        "磁盘空间监控告警"
+      ]
+    },
+    "model": {
+      "description": "模型架构、权重加载、接口定义相关的失败",
+      "severity": "critical",
+      "typical_scenarios": [
+        "JAX模型编译失败（形状不匹配、类型错误）",
+        "权重加载失败（checkpoint损坏、版本不匹配）",
+        "LoRA配置错误（rank维度、目标层错误）",
+        "SigLIP视觉编码器初始化失败",
+        "Gemma tokenizer加载失败",
+        "模型参数维度不匹配（action_dim不一致）"
+      ],
+      "diagnostic_checks": [
+        "验证checkpoint文件完整性",
+        "检查模型配置与权重版本的兼容性",
+        "验证所有张量形状和类型",
+        "检查JAX编译错误堆栈",
+        "验证LoRA配置参数范围"
+      ],
+      "recovery_actions": [
+        "重新下载或验证checkpoint文件",
+        "调整模型配置以匹配权重",
+        "重新编译JAX模型",
+        "回滚到已知良好的checkpoint版本",
+        "修复配置文件中的参数错误"
+      ],
+      "rerun_scope": ["phase_1_specification", "phase_2_foundation_build", "phase_3_preflight_validation"],
+      "preventive_measures": [
+        "配置验证schema",
+        "checkpoint完整性检查",
+        "版本兼容性测试"
+      ]
+    },
+    "training": {
+      "description": "训练执行、优化器、损失计算相关的失败",
+      "severity": "critical",
+      "typical_scenarios": [
+        "CUDA内存溢出（OOM）",
+        "梯度爆炸或消失（loss变为NaN/Inf）",
+        "优化器配置错误（学习率过大、weight_decay设置）",
+        "训练checkpoint保存失败（磁盘空间不足、权限问题）",
+        "分布式训练同步失败（多GPU通讯错误）",
+        "训练循环崩溃（数据批次异常、数值不稳定）",
+        "损失函数计算错误（维度不匹配、mask错误）"
+      ],
+      "diagnostic_checks": [
+        "监控GPU内存使用情况",
+        "检查loss曲线和梯度范数",
+        "验证optimizer配置参数",
+        "检查checkpoint目录权限和空间",
+        "分析训练日志中的异常模式",
+        "验证数据批次的一致性"
+      ],
+      "recovery_actions": [
+        "降低batch_size或使用gradient checkpointing",
+        "调整学习率或使用warmup",
+        "启用梯度裁剪（clip_norm）",
+        "清理checkpoint目录或扩展磁盘空间",
+        "重新初始化优化器状态",
+        "从最近的稳定checkpoint恢复",
+        "启用EMA稳定训练"
+      ],
+      "rerun_scope": ["phase_4_execution_branches"],
+      "preventive_measures": [
+        "GPU内存监控告警",
+        "loss异常检测和自动停止",
+        "checkpoint自动清理策略",
+        "梯度监控和熔断机制"
+      ]
+    },
+    "deployment": {
+      "description": "推理服务、API部署、延迟压测相关的失败",
+      "severity": "high",
+      "typical_scenarios": [
+        "推理服务启动失败（端口占用、依赖缺失）",
+        "模型加载到推理环境失败（JAX/PyTorch版本冲突）",
+        "延迟压测超时（吞吐量不足、资源竞争）",
+        "批量推理维度错误（batch shape不匹配）",
+        "反归一化链路失败（norm_stats缺失）",
+        "影子部署与生产环境数据格式不匹配",
+        "GPU资源分配失败或驱动错误"
+      ],
+      "diagnostic_checks": [
+        "检查服务端口和网络配置",
+        "验证依赖版本兼容性",
+        "监控推理延迟和吞吐量",
+        "验证输入输出数据格式",
+        "检查GPU驱动和CUDA版本",
+        "分析推理服务日志和错误堆栈"
+      ],
+      "recovery_actions": [
+        "释放占用的端口或更改服务端口",
+        "重新安装或更新依赖包",
+        "优化推理配置（batch size, tensor parallelism）",
+        "修复反归一化配置",
+        "重新编译或量化模型",
+        "调整GPU资源分配",
+        "重启推理服务"
+      ],
+      "rerun_scope": ["phase_4_execution_branches"],
+      "preventive_measures": [
+        "健康检查端点",
+        "依赖版本锁定",
+        "性能基准测试",
+        "容器化部署隔离"
+      ]
+    },
+    "safety": {
+      "description": "安全规则验证、动作边界检查、合规性相关的失败",
+      "severity": "critical",
+      "typical_scenarios": [
+        "动作空间边界检查失败（关节角度超限）",
+        "速度/加速度限制违规",
+        "碰撞检测失败或误报",
+        "归一化空间安全规则验证失败",
+        "安全阈值配置错误",
+        "应急停止触发条件异常",
+        "机器人状态监控异常",
+        "人机交互安全距离检查失败"
+      ],
+      "diagnostic_checks": [
+        "验证安全规则配置参数",
+        "检查机器人运动学模型",
+        "验证碰撞检测算法",
+        "分析历史违规日志",
+        "检查传感器数据完整性",
+        "验证应急停止逻辑"
+      ],
+      "recovery_actions": [
+        "调整安全阈值配置",
+        "修复碰撞检测算法bug",
+        "优化运动学模型参数",
+        "增加安全裕度",
+        "修复传感器数据处理逻辑",
+        "重新训练安全分类器（如果适用）",
+        "调整动作裁剪策略"
+      ],
+      "rerun_scope": ["phase_3_preflight_validation", "phase_4_execution_branches"],
+      "preventive_measures": [
+        "安全规则自动化测试",
+        "仿真环境验证",
+        "渐进式部署策略",
+        "实时监控和告警"
+      ]
+    }
+  },
+  "retry_strategy": {
+    "max_retries": 2,
+    "retry_conditions": [
+      {
+        "category": "data",
+        "retryable_errors": [
+          "ConnectionError",
+          "TimeoutError",
+          "HTTPError",
+          "PermissionError",
+          "DiskFull"
+        ]
+      },
+      {
+        "category": "model",
+        "retryable_errors": [
+          "FileNotFoundError",
+          "ChecksumError",
+          "DownloadError"
+        ]
+      },
+      {
+        "category": "training",
+        "retryable_errors": [
+          "RuntimeError",
+          "CUDARuntimeError",
+          "NCCLError"
+        ]
+      },
+      {
+        "category": "deployment",
+        "retryable_errors": [
+          "PortInUseError",
+          "DependencyError",
+          "ServiceUnavailable"
+        ]
+      },
+      {
+        "category": "safety",
+        "retryable_errors": []
+      }
+    ],
+    "backoff_strategy": {
+      "initial_delay_seconds": 30,
+      "multiplier": 2.0,
+      "max_delay_seconds": 300
+    },
+    "non_retryable_errors": [
+      "ValueError",
+      "TypeError",
+      "AssertionError",
+      "ConfigurationError"
+    ]
+  },
+  "rollback_strategy": {
+    "strategy": "phase_local",
+    "description": "仅回滚失败phase及其下游，不重置全链路",
+    "rules": {
+      "phase_0_bootstrap": {
+        "rollback_scope": ["phase_0_bootstrap"],
+        "preserve_artifacts": [],
+        "cleanup_intermediate": false
+      },
+      "phase_0_5_user_config": {
+        "rollback_scope": ["phase_0_5_user_config"],
+        "preserve_artifacts": [],
+        "cleanup_intermediate": false
+      },
+      "phase_1_specification": {
+        "rollback_scope": ["phase_1_specification", "phase_2_foundation_build", "phase_3_preflight_validation", "phase_4_execution_branches", "phase_5_convergence"],
+        "preserve_artifacts": ["config/data_paths.json"],
+        "cleanup_intermediate": true
+      },
+      "phase_2_foundation_build": {
+        "rollback_scope": ["phase_2_foundation_build", "phase_3_preflight_validation", "phase_4_execution_branches", "phase_5_convergence"],
+        "preserve_artifacts": ["config/data_paths.json", "spec/model_config.json", "spec/data_report.json"],
+        "cleanup_intermediate": true
+      },
+      "phase_3_preflight_validation": {
+        "rollback_scope": ["phase_3_preflight_validation", "phase_4_execution_branches", "phase_5_convergence"],
+        "preserve_artifacts": ["config/data_paths.json", "spec/model_config.json", "spec/data_report.json", "build/transform_pipeline.json", "build/norm_stats.json", "build/train_plan.json", "build/infer_plan.json"],
+        "cleanup_intermediate": false
+      },
+      "phase_4_execution_branches": {
+        "rollback_scope": ["phase_4_execution_branches", "phase_5_convergence"],
+        "preserve_artifacts": [
+          "config/data_paths.json",
+          "spec/model_config.json",
+          "spec/data_report.json",
+          "build/transform_pipeline.json",
+          "build/norm_stats.json",
+          "build/train_plan.json",
+          "build/infer_plan.json",
+          "build/module_validation_report.json",
+          "build/safety_config.json",
+          "build/integration_report.json"
+        ],
+        "cleanup_intermediate": false,
+        "branch_specific": {
+          "training_branch": {
+            "preserve_artifacts": ["run/checkpoints/latest.ckpt"],
+            "checkpoint_retention": "keep_all"
+          },
+          "evaluation_branch": {
+            "preserve_artifacts": ["run/evaluation/latest_metrics.json"]
+          },
+          "serving_branch": {
+            "preserve_artifacts": ["run/deploy/latest_status.json"]
+          }
+        }
+      },
+      "phase_5_convergence": {
+        "rollback_scope": ["phase_5_convergence"],
+        "preserve_artifacts": [
+          "config/data_paths.json",
+          "spec/model_config.json",
+          "spec/data_report.json",
+          "build/transform_pipeline.json",
+          "build/norm_stats.json",
+          "build/train_plan.json",
+          "build/infer_plan.json",
+          "build/module_validation_report.json",
+          "build/safety_config.json",
+          "build/integration_report.json",
+          "run/checkpoints/latest.ckpt",
+          "run/evaluation/latest_metrics.json",
+          "run/deploy/latest_status.json"
+        ],
+        "cleanup_intermediate": false
+      }
+    },
+    "checkpoint_management": {
+      "retain_checkpoints": 3,
+      "cleanup_old_checkpoints": true,
+      "checkpoint_storage_path": ".claude/artifacts/run/checkpoints/"
+    }
+  },
+  "root_cause_analysis": {
+    "workflow": [
+      {
+        "step": 1,
+        "name": "Failure Capture",
+        "description": "捕获失败事件的上下文信息",
+        "collect": [
+          "task_id",
+          "phase_id",
+          "agent_id",
+          "error_type",
+          "error_message",
+          "stack_trace",
+          "timestamp",
+          "environment_info"
+        ]
+      },
+      {
+        "step": 2,
+        "name": "Category Classification",
+        "description": "根据错误特征分类失败类型",
+        "classifier": {
+          "data": "检查数据加载、处理、归一化相关堆栈",
+          "model": "检查模型架构、权重加载相关堆栈",
+          "training": "检查训练循环、优化器、损失函数相关堆栈",
+          "deployment": "检查推理服务、API、延迟相关堆栈",
+          "safety": "检查安全规则、边界检查相关堆栈"
+        }
+      },
+      {
+        "step": 3,
+        "name": "Retry Eligibility Check",
+        "description": "判断失败是否可重试",
+        "conditions": [
+          "错误类型在可重试列表中",
+          "已重试次数 < max_retries",
+          "资源状态正常（磁盘、GPU、网络）"
+        ]
+      },
+      {
+        "step": 4,
+        "name": "Root Cause Identification",
+        "description": "确定根本原因",
+        "analysis_methods": [
+          "堆栈跟踪分析",
+          "日志模式识别",
+          "资源使用统计",
+          "配置差异对比",
+          "历史失败记录查询"
+        ]
+      },
+      {
+        "step": 5,
+        "name": "Recovery Planning",
+        "description": "制定恢复计划",
+        "outputs": [
+          "recovery_actions": "具体的恢复操作",
+          "rerun_scope": "需要重跑的任务范围",
+          "rollback_plan": "是否需要回滚及回滚范围",
+          "fix_owner": "负责修复的agent",
+          "preventive_measures": "预防措施"
+        ]
+      },
+      {
+        "step": 6,
+        "name": "Execution",
+        "description": "执行恢复计划",
+        "actions": [
+          "执行重试（如果适用）",
+          "执行回滚（如果需要）",
+          "触发修复任务",
+          "更新失败记录"
+        ]
+      }
+    ],
+    "templates": {
+      "data_loading_failure": {
+        "hypothesis": "数据加载可能由于网络问题、缓存损坏或格式错误",
+        "verification_steps": [
+          "检查HuggingFace缓存完整性",
+          "验证parquet文件格式",
+          "测试网络连接",
+          "检查磁盘空间和权限"
+        ],
+        "common_solutions": [
+          "清理并重建HuggingFace缓存",
+          "重新下载数据集",
+          "修复数据文件格式",
+          "调整数据加载配置"
+        ]
+      },
+      "model_compilation_failure": {
+        "hypothesis": "模型编译可能由于配置不匹配或版本兼容性问题",
+        "verification_steps": [
+          "验证模型配置参数",
+          "检查JAX版本兼容性",
+          "验证所有张量形状",
+          "检查依赖包版本"
+        ],
+        "common_solutions": [
+          "调整模型配置",
+          "更新JAX或依赖包",
+          "重新编译模型",
+          "修复形状不匹配问题"
+        ]
+      },
+      "training_oom_failure": {
+        "hypothesis": "训练OOM可能由于batch size过大或内存泄漏",
+        "verification_steps": [
+          "检查GPU内存使用峰值",
+          "分析内存分配模式",
+          "检查是否有内存泄漏",
+          "验证gradient checkpointing配置"
+        ],
+        "common_solutions": [
+          "降低batch_size",
+          "启用gradient checkpointing",
+          "使用混合精度训练",
+          "清理未使用的变量"
+        ]
+      },
+      "safety_validation_failure": {
+        "hypothesis": "安全验证失败可能由于配置错误或算法bug",
+        "verification_steps": [
+          "验证安全规则配置",
+          "检查运动学模型",
+          "分析违规日志",
+          "测试碰撞检测算法"
+        ],
+        "common_solutions": [
+          "调整安全阈值",
+          "修复算法bug",
+          "更新运动学模型",
+          "优化碰撞检测"
+        ]
+      }
+    }
+  },
+  "notification_rules": {
+    "severity_mapping": {
+      "critical": {
+        "categories": ["model", "training", "safety"],
+        "notify_immediately": true,
+        "escalation_minutes": 30
+      },
+      "high": {
+        "categories": ["data", "deployment"],
+        "notify_immediately": true,
+        "escalation_minutes": 60
+      }
+    },
+    "escalation_rules": [
+      {
+        "condition": "同一任务失败超过max_retries",
+        "action": "escalate_to_orchestrator"
+      },
+      {
+        "condition": "同一phase内失败任务超过50%",
+        "action": "pause_phase_and_investigate"
+      },
+      {
+        "condition": "安全类失败",
+        "action": "immediate_pause_all_operations"
+      }
+    ]
+  },
+  "artifact_preservation": {
+    "always_preserve": [
+      "config/data_paths.json",
+      "spec/model_config.json",
+      "run/checkpoints/latest.ckpt"
+    ],
+    "preserve_on_failure": [
+      "build/norm_stats.json",
+      "build/transform_pipeline.json",
+      "build/module_validation_report.json",
+      "build/safety_config.json"
+    ],
+    "cleanup_after_success": [
+      "run/temp/*",
+      "logs/*.tmp"
+    ]
+  }
+}

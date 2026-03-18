@@ -193,13 +193,14 @@ def train_step(
             value_targets: at.Float[at.Array, "b"]
         ):
             # Value 模型使用 value_targets 计算损失
-            loss_per_sample = model.compute_loss(
+            # compute_loss returns (loss_per_sample, expected_value)
+            loss_per_sample, predicted_values = model.compute_loss(
                 rng,
                 observation,
                 train=True,
                 value_targets=value_targets
             )
-            return jnp.mean(loss_per_sample)
+            return jnp.mean(loss_per_sample), predicted_values
         # TODO: 检查batch的类型 FROM DATA_LOADER!!!`
         # 解包 batch（Value 模型有3个元素）
         observation, actions, value_targets = batch  # type: ignore
@@ -207,8 +208,8 @@ def train_step(
         
         # 过滤掉冻结的参数
         diff_state = nnx.DiffState(0, config.trainable_filter)
-        # 计算损失和梯度（使用 value_targets）
-        loss, grads = nnx.value_and_grad(loss_fn, argnums=diff_state)(model, train_rng, observation, value_targets)
+        # 计算损失和梯度（使用 value_targets，has_aux=True 因为返回 (loss, aux))
+        (loss, pred_values), grads = nnx.value_and_grad(loss_fn, argnums=diff_state, has_aux=True)(model, train_rng, observation, value_targets)
     else:
         # 标准模型的损失函数
         @at.typecheck
@@ -291,6 +292,13 @@ def train_step(
         "grad_norm": optax.global_norm(grads),
         "param_norm": optax.global_norm(kernel_params),
     }
+    # 对于 Value 模型，打印预测值和目标值
+    if is_value_model:
+        jax.debug.print("step: {} loss: {}", state.step, loss, ordered=True)
+        jax.debug.print("  pred: {}", pred_values, ordered=True)
+        jax.debug.print("  targ: {}", value_targets, ordered=True)
+
+    
     return new_state, info
 
 # 主训练流程

@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpi.local/schemas/team_config.schema.json",
+  "title": "OpenPI Agent Team Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "project",
+    "runtime",
+    "resources",
+    "agents",
+    "artifacts",
+    "contracts",
+    "gates",
+    "phases",
+    "failure_policy",
+    "hooks",
+    "commands",
+    "notes"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "repo_root", "objective"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "repo_root": { "type": "string", "minLength": 1 },
+        "objective": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orchestrator", "teammate_mode", "max_parallel_agents"],
+      "properties": {
+        "orchestrator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "experimental_flag"],
+          "properties": {
+            "mode": { "type": "string", "minLength": 1 },
+            "experimental_flag": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["env", "value"],
+              "properties": {
+                "env": { "type": "string", "minLength": 1 },
+                "value": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        "teammate_mode": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["default", "supported"],
+          "properties": {
+            "default": {
+              "type": "string",
+              "enum": ["in-process", "tmux"]
+            },
+            "supported": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": ["in-process", "tmux"]
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "max_parallel_agents": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pools", "role_binding"],
+      "properties": {
+        "pools": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu", "gpu"],
+          "properties": {
+            "cpu": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max_concurrency"],
+              "properties": {
+                "max_concurrency": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "gpu": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max_concurrency", "memory_threshold"],
+              "properties": {
+                "max_concurrency": { "type": "integer", "minimum": 1 },
+                "memory_threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+              }
+            }
+          }
+        },
+        "role_binding": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["cpu", "gpu"]
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lead", "workers"],
+      "properties": {
+        "lead": { "type": "string", "minLength": 1 },
+        "workers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "required"],
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "required": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_output_schema"],
+      "properties": {
+        "task_output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "required", "properties"],
+          "properties": {
+            "type": { "type": "string" },
+            "required": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "properties": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^gate_[A-Za-z0-9_]+$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["description", "requires_artifacts"],
+          "properties": {
+            "description": { "type": "string", "minLength": 1 },
+            "requires_artifacts": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/parallelPhase" },
+          { "$ref": "#/$defs/parallelBranchesPhase" }
+        ]
+      }
+    },
+    "failure_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on_task_failed", "rollback", "resume"],
+      "properties": {
+        "on_task_failed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_retries", "route_to", "classify_by"],
+          "properties": {
+            "max_retries": { "type": "integer", "minimum": 0 },
+            "route_to": { "type": "string", "minLength": 1 },
+            "classify_by": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        },
+        "rollback": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "description"],
+          "properties": {
+            "strategy": { "type": "string", "minLength": 1 },
+            "description": { "type": "string", "minLength": 1 }
+          }
+        },
+        "resume": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed", "from_artifacts"],
+          "properties": {
+            "allowed": { "type": "boolean" },
+            "from_artifacts": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["teammate_idle", "task_completed"],
+      "properties": {
+        "teammate_idle": { "$ref": "#/$defs/hookRule" },
+        "task_completed": { "$ref": "#/$defs/hookRule" }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "agent", "action", "produces"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^t[0-9]+_[0-9]+$"
+        },
+        "agent": { "type": "string", "minLength": 1 },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^t[0-9]+_[0-9]+$"
+          },
+          "uniqueItems": true
+        },
+        "action": { "type": "string", "minLength": 1 },
+        "produces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "parallelPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "mode", "tasks"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^phase_[0-9]+_[a-z0-9_]+$"
+        },
+        "mode": {
+          "const": "parallel"
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/task" }
+        },
+        "gate_on_complete": {
+          "type": "string",
+          "pattern": "^gate_[A-Za-z0-9_]+$"
+        }
+      }
+    },
+    "parallelBranchesPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "mode", "branches"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^phase_[0-9]+_[a-z0-9_]+$"
+        },
+        "mode": {
+          "const": "parallel_branches"
+        },
+        "branches": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/task" }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "hookRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "rule"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "rule": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

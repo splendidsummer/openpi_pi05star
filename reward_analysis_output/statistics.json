@@ -1,0 +1,29 @@
+{
+  "reward": {
+    "min": -1000.0,
+    "max": 0.0,
+    "mean": -1.8829175233840942,
+    "std": 29.720731735229492,
+    "median": -1.0,
+    "q1": -1.0,
+    "q3": -1.0,
+    "total_count": 33865
+  },
+  "state_value": {
+    "min": -999.0,
+    "max": -0.0,
+    "mean": -177.1035919189453,
+    "std": 113.26557159423828,
+    "median": -169.0,
+    "q1": -255.0,
+    "q3": -84.0,
+    "total_count": 33865
+  },
+  "episode_info": {
+    "total_episodes": 100,
+    "total_frames": 33865,
+    "avg_episode_length": 338.65,
+    "min_episode_length": 211,
+    "max_episode_length": 541
+  }
+}

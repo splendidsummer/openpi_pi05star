@@ -11,6 +11,22 @@
             "program": "${file}",
             "console": "integratedTerminal", 
             "python": "${workspaceFolder}/.venv/bin/python"
+        },
+        {
+            "name": "Train: pi05_droid_100_value",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/train.py",
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "pi05_droid_100_value",
+                "--exp-name=experiment-${currentDate:yyyyMMdd_HHmmss}",
+                "--overwrite"
+            ],
+            "env": {
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9"
+            }
         }
     ]
 }

@@ -53,8 +53,8 @@ except ImportError:
 import argparse
 
 # Configuration placeholders
-DEFAULT_PARQUET_PATH = "/root/autodl-tmp/huggingface/lerobot/SummerZhang/droid_100"
-DEFAULT_CHECKPOINT_DIR = "/root/autodl-tmp/openpi_pi05star/checkpoints/pi05_droid_100_value/experiment-20260208_135947/301"
+DEFAULT_PARQUET_PATH = "/root/autodl-tmp/huggingface/lerobot/local_pkl_dataset"
+DEFAULT_CHECKPOINT_DIR = "/root/autodl-tmp/openpi_pi05star/checkpoints/pi05_local_droid_value/value_model_v2/5000"
 
 GAMMA = 1.00 # since there isn't any gamma in the advantage formula in pi_star paper 
 
@@ -92,7 +92,7 @@ def main():
     logger.info("1. Creating TrainConfig and Policy...")
 
     # Using existing config pi05_droid_value (defined in config.py)
-    config = _config.get_config("pi05_droid_value")
+    config = _config.get_config("pi05_local_droid_value")
 
     # 修复：强制 seed 为 uint32 的 Python int，避免 PRNG key dtype 错误
     seed = getattr(config, "seed", 0)
@@ -137,7 +137,7 @@ def main():
             logger.info(f"Extracted episode index: {episode_index} from path: {episode_path}")
 
             # Load task prompt from episodes.jsonl
-            data_dir = "/root/autodl-tmp/droid_100"
+            data_dir = "/root/autodl-tmp/huggingface/lerobot/local_pkl_dataset"
             task_prompt = load_episode_metadata(data_dir, episode_index=episode_index)
             
             logger.info(f"Loaded task prompt: {task_prompt}")

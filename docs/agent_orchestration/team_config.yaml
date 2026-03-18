@@ -1,0 +1,329 @@
+version: "0.3.0-exec-draft"
+project:
+  name: "openpi_old"
+  repo_root: "/home/summer/Projects/openpi_old"
+  objective: "高并行多智能体完成VLA数据处理、训练、评估、部署闭环"
+
+runtime:
+  orchestrator:
+    mode: "agent_teams"
+    experimental_flag:
+      env: "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
+      value: "1"
+  teammate_mode:
+    default: "in-process"
+    supported: ["in-process", "tmux"]
+  max_parallel_agents: 14
+
+resources:
+  pools:
+    cpu:
+      max_concurrency: 10
+    gpu:
+      max_concurrency: 2
+      memory_threshold: 0.90
+  role_binding:
+    model_architect: "cpu"
+    data_explorer: "cpu"
+    data_loader: "cpu"
+    normalizer: "cpu"
+    training_dev: "cpu"
+    inference_dev: "cpu"
+    safety_validator: "cpu"
+    debug_agent: "cpu"
+    orchestrator: "cpu"
+    module_tester: "gpu"
+    integration_tester: "gpu"
+    training_runner: "gpu"
+    evaluation_agent: "gpu"
+    inference_deployer: "gpu"
+
+agents:
+  lead: "orchestrator"
+  workers:
+    - "model_architect"
+    - "data_explorer"
+    - "data_loader"
+    - "normalizer"
+    - "post_normalization_validator"
+    - "module_tester"
+    - "training_dev"
+    - "inference_dev"
+    - "integration_tester"
+    - "safety_validator"
+    - "training_runner"
+    - "evaluation_agent"
+    - "inference_deployer"
+    - "debug_agent"
+
+artifacts:
+  root: ".claude/artifacts"
+  required:
+    - "config/data_paths.json"
+    - "spec/model_config.json"
+    - "spec/data_report.json"
+    - "build/transform_pipeline.json"
+    - "build/norm_stats.json"
+    - "build/post_norm_validation.json"
+    - "build/module_validation_report.json"
+    - "build/integration_report.json"
+    - "build/safety_config.json"
+    - "run/checkpoints/latest.ckpt"
+    - "run/evaluation/latest_metrics.json"
+    - "run/deploy/latest_status.json"
+
+contracts:
+  task_output_schema:
+    type: "object"
+    required: ["status", "summary", "artifacts", "metrics", "next_actions"]
+    properties:
+      status: { enum: ["success", "failed", "partial"] }
+      summary: { type: "string" }
+      artifacts: { type: "array" }
+      metrics: { type: "object" }
+      next_actions: { type: "array" }
+
+gates:
+  gate_0_5_config_ready:
+    description: "用户数据路径配置就绪"
+    requires_artifacts:
+      - ".claude/artifacts/config/data_paths.json"
+    validation_rules:
+      - "raw_dataset_path 路径存在"
+      - "所有必需字段已填写"
+  gate_A_spec_ready:
+    description: "模型规格与数据分析就绪"
+    requires_artifacts:
+      - ".claude/artifacts/spec/model_config.json"
+      - ".claude/artifacts/spec/data_report.json"
+  gate_B_data_ready:
+    description: "数据流水线与归一化基础就绪"
+    requires_artifacts:
+      - ".claude/artifacts/build/transform_pipeline.json"
+      - ".claude/artifacts/build/norm_stats.json"
+  gate_B_5_post_norm_validated:
+    description: "归一化后数据验证通过（第二轮 EDA）"
+    requires_artifacts:
+      - ".claude/artifacts/build/post_norm_validation.json"
+    validation_rules:
+      - "validation_status in ['passed', 'warning']"
+      - "nan_inf_check.state.nan_count == 0"
+      - "nan_inf_check.action.nan_count == 0"
+      - "nan_inf_check.state.inf_count == 0"
+      - "nan_inf_check.action.inf_count == 0"
+    on_failure:
+      action: "block_and_route"
+      route_to: "debug_agent"
+      allow_warning: true
+  gate_C_release_ready:
+    description: "集成与安全验证通过"
+    requires_artifacts:
+      - ".claude/artifacts/build/module_validation_report.json"
+      - ".claude/artifacts/build/integration_report.json"
+      - ".claude/artifacts/build/safety_config.json"
+  gate_D_train_ready:
+    description: "首个可评估checkpoint可用"
+    requires_artifacts:
+      - ".claude/artifacts/run/checkpoints/latest.ckpt"
+
+phases:
+  - id: "phase_0_bootstrap"
+    mode: "parallel"
+    tasks:
+      - id: "t0_1"
+        agent: "orchestrator"
+        action: "初始化任务图、依赖图、资源配额"
+        produces:
+          - ".claude/artifacts/spec/run_plan.json"
+      - id: "t0_2"
+        agent: "debug_agent"
+        action: "初始化失败分类、重试与回滚策略"
+        produces:
+          - ".claude/artifacts/spec/failure_policy.json"
+
+  - id: "phase_0_5_user_config"
+    mode: "interactive"
+    description: "用户配置阶段 - 收集数据管线所需的全部路径配置"
+    tasks:
+      - id: "t0_5_1"
+        agent: "orchestrator"
+        action: "向用户收集数据管线配置"
+        interactive_prompts:
+          - prompt: "请指定原始数据集的输入路径（包含 parquet 文件的目录）"
+            field: "raw_dataset_path"
+            example: "/path/to/lerobot/dataset/raw"
+            required: true
+          - prompt: "请指定处理后数据的输出路径（transform pipeline 产物存放位置）"
+            field: "processed_dataset_path"
+            example: "/path/to/processed/dataset"
+            required: true
+          - prompt: "请指定归一化统计结果的输出路径（norm_stats.json 存放位置）"
+            field: "norm_stats_path"
+            example: "/path/to/norm_stats"
+            required: true
+          - prompt: "请指定训练 checkpoint 的输出路径（可选，默认使用 artifacts 目录）"
+            field: "checkpoint_path"
+            example: "/path/to/checkpoints"
+            required: false
+          - prompt: "请指定评估结果的输出路径（可选，默认使用 artifacts 目录）"
+            field: "evaluation_output_path"
+            example: "/path/to/eval_results"
+            required: false
+        validation:
+          - "raw_dataset_path 必须存在且包含有效的 parquet 文件"
+          - "processed_dataset_path 父目录必须存在（如不存在将创建）"
+          - "norm_stats_path 父目录必须存在（如不存在将创建）"
+        produces:
+          - ".claude/artifacts/config/data_paths.json"
+    gate_on_complete: "gate_0_5_config_ready"
+
+  - id: "phase_1_specification"
+    mode: "parallel"
+    tasks:
+      - id: "t1_1"
+        agent: "model_architect"
+        action: "输出模型配置与接口约束"
+        produces:
+          - ".claude/artifacts/spec/model_config.json"
+      - id: "t1_2"
+        agent: "data_explorer"
+        action: "输出数据质量与异常分析"
+        produces:
+          - ".claude/artifacts/spec/data_report.json"
+    gate_on_complete: "gate_A_spec_ready"
+
+  - id: "phase_2_foundation_build"
+    mode: "parallel"
+    tasks:
+      - id: "t2_1"
+        agent: "data_loader"
+        needs: ["t1_1", "t1_2"]
+        action: "实现0-5步数据变换流水线"
+        produces:
+          - ".claude/artifacts/build/transform_pipeline.json"
+      - id: "t2_2"
+        agent: "normalizer"
+        needs: ["t1_1", "t1_2"]
+        action: "生成PI0/PI05归一化统计"
+        produces:
+          - ".claude/artifacts/build/norm_stats.json"
+      - id: "t2_3"
+        agent: "training_dev"
+        needs: ["t1_1"]
+        action: "生成训练脚本和配置"
+        produces:
+          - ".claude/artifacts/build/train_plan.json"
+      - id: "t2_4"
+        agent: "inference_dev"
+        needs: ["t1_1"]
+        action: "生成推理服务和反归一化链路"
+        produces:
+          - ".claude/artifacts/build/infer_plan.json"
+    gate_on_complete: "gate_B_data_ready"
+
+  - id: "phase_2_5_post_norm_validation"
+    mode: "sequential"
+    description: "归一化后数据验证（第二轮 EDA）"
+    tasks:
+      - id: "t2_5_1"
+        agent: "post_normalization_validator"
+        needs: ["t2_1", "t2_2"]
+        action: "验证归一化后数据质量（NaN/Inf检查、归一化效果验证、smoothness复核）"
+        produces:
+          - ".claude/artifacts/build/post_norm_validation.json"
+    gate_on_complete: "gate_B_5_post_norm_validated"
+
+  - id: "phase_3_preflight_validation"
+    mode: "parallel"
+    tasks:
+      - id: "t3_1"
+        agent: "module_tester"
+        needs: ["t2_5_1"]
+        action: "dummy-data与shape与前向验证"
+        produces:
+          - ".claude/artifacts/build/module_validation_report.json"
+      - id: "t3_2"
+        agent: "safety_validator"
+        needs: ["t2_5_1", "t2_4"]
+        action: "归一化空间+原始空间安全规则验证"
+        produces:
+          - ".claude/artifacts/build/safety_config.json"
+      - id: "t3_3"
+        agent: "integration_tester"
+        needs: ["t2_5_1", "t2_3", "t2_4"]
+        action: "端到端最小链路测试"
+        produces:
+          - ".claude/artifacts/build/integration_report.json"
+    gate_on_complete: "gate_C_release_ready"
+
+  - id: "phase_4_execution_branches"
+    mode: "parallel_branches"
+    branches:
+      training_branch:
+        - id: "t4_1"
+          agent: "training_runner"
+          needs: ["t3_2", "t3_3"]
+          action: "执行训练并产出checkpoint"
+          produces:
+            - ".claude/artifacts/run/checkpoints/latest.ckpt"
+      evaluation_branch:
+        - id: "t4_2"
+          agent: "evaluation_agent"
+          needs: ["t4_1"]
+          action: "从首个checkpoint起持续评估"
+          produces:
+            - ".claude/artifacts/run/evaluation/latest_metrics.json"
+      serving_branch:
+        - id: "t4_3"
+          agent: "inference_deployer"
+          needs: ["t2_4"]
+          action: "影子部署+联调+延迟压测"
+          produces:
+            - ".claude/artifacts/run/deploy/latest_status.json"
+
+  - id: "phase_5_convergence"
+    mode: "parallel"
+    tasks:
+      - id: "t5_1"
+        agent: "orchestrator"
+        needs: ["t4_2", "t4_3"]
+        action: "汇总指标并给出发布决策"
+        produces:
+          - ".claude/artifacts/run/release_decision.json"
+      - id: "t5_2"
+        agent: "debug_agent"
+        needs: ["t5_1"]
+        action: "对失败指标生成回流任务"
+        produces:
+          - ".claude/artifacts/run/regression_backlog.json"
+
+failure_policy:
+  on_task_failed:
+    max_retries: 2
+    route_to: "debug_agent"
+    classify_by: ["data", "model", "training", "deployment", "safety"]
+  rollback:
+    strategy: "phase_local"
+    description: "仅回滚失败phase及其下游，不重置全链路"
+  resume:
+    allowed: true
+    from_artifacts: true
+
+hooks:
+  teammate_idle:
+    enabled: true
+    rule: "若任务未满足产物契约，返回反馈并要求继续"
+  task_completed:
+    enabled: true
+    rule: "若未生成 required artifact 则阻止完成"
+
+commands:
+  train_jax: "uv run python scripts/train.py --config-name=pi05_droid"
+  train_torch: "uv run python scripts/train_pytorch.py --config-name=pi05_droid"
+  serve: "uv run python scripts/serve_policy.py --port=8000"
+  test_models: "pytest --strict-markers src/openpi/models/ -m 'not manual'"
+  test_transforms: "pytest --strict-markers src/openpi/transforms_test.py -m 'not manual'"
+
+notes:
+  - "该草案用于编排层，不替代代码仓库现有训练/推理脚本。"
+  - "建议将 .claude/artifacts 纳入团队共享规范，并配置清理策略。"

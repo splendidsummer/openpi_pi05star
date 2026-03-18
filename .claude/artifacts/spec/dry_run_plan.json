@@ -1,0 +1,264 @@
+{
+  "project": "openpi_old",
+  "phases": [
+    {
+      "id": "phase_0_bootstrap",
+      "tasks": [
+        {
+          "id": "t0_1",
+          "agent": "orchestrator",
+          "status": "pending",
+          "needs": [],
+          "produces": [
+            ".claude/artifacts/spec/run_plan.json"
+          ]
+        },
+        {
+          "id": "t0_2",
+          "agent": "debug_agent",
+          "status": "pending",
+          "needs": [],
+          "produces": [
+            ".claude/artifacts/spec/failure_policy.json"
+          ]
+        }
+      ],
+      "gate": null
+    },
+    {
+      "id": "phase_0_5_user_config",
+      "tasks": [
+        {
+          "id": "t0_5_1",
+          "agent": "orchestrator",
+          "status": "pending",
+          "needs": [],
+          "produces": [
+            ".claude/artifacts/config/data_paths.json"
+          ],
+          "interactive_prompts": [
+            {
+              "prompt": "请指定原始数据集的输入路径（包含 parquet 文件的目录）",
+              "field": "raw_dataset_path",
+              "example": "/path/to/lerobot/dataset/raw",
+              "required": true
+            },
+            {
+              "prompt": "请指定处理后数据的输出路径（transform pipeline 产物存放位置）",
+              "field": "processed_dataset_path",
+              "example": "/path/to/processed/dataset",
+              "required": true
+            },
+            {
+              "prompt": "请指定归一化统计结果的输出路径（norm_stats.json 存放位置）",
+              "field": "norm_stats_path",
+              "example": "/path/to/norm_stats",
+              "required": true
+            },
+            {
+              "prompt": "请指定训练 checkpoint 的输出路径（可选，默认使用 artifacts 目录）",
+              "field": "checkpoint_path",
+              "example": "/path/to/checkpoints",
+              "required": false
+            },
+            {
+              "prompt": "请指定评估结果的输出路径（可选，默认使用 artifacts 目录）",
+              "field": "evaluation_output_path",
+              "example": "/path/to/eval_results",
+              "required": false
+            }
+          ]
+        }
+      ],
+      "gate": "gate_0_5_config_ready"
+    },
+    {
+      "id": "phase_1_specification",
+      "tasks": [
+        {
+          "id": "t1_1",
+          "agent": "model_architect",
+          "status": "pending",
+          "needs": [],
+          "produces": [
+            ".claude/artifacts/spec/model_config.json"
+          ]
+        },
+        {
+          "id": "t1_2",
+          "agent": "data_explorer",
+          "status": "pending",
+          "needs": [],
+          "produces": [
+            ".claude/artifacts/spec/data_report.json"
+          ]
+        }
+      ],
+      "gate": "gate_A_spec_ready"
+    },
+    {
+      "id": "phase_2_foundation_build",
+      "tasks": [
+        {
+          "id": "t2_1",
+          "agent": "data_loader",
+          "status": "pending",
+          "needs": [
+            "t1_1",
+            "t1_2"
+          ],
+          "produces": [
+            ".claude/artifacts/build/transform_pipeline.json"
+          ]
+        },
+        {
+          "id": "t2_2",
+          "agent": "normalizer",
+          "status": "pending",
+          "needs": [
+            "t1_1",
+            "t1_2"
+          ],
+          "produces": [
+            ".claude/artifacts/build/norm_stats.json"
+          ]
+        },
+        {
+          "id": "t2_3",
+          "agent": "training_dev",
+          "status": "pending",
+          "needs": [
+            "t1_1"
+          ],
+          "produces": [
+            ".claude/artifacts/build/train_plan.json"
+          ]
+        },
+        {
+          "id": "t2_4",
+          "agent": "inference_dev",
+          "status": "pending",
+          "needs": [
+            "t1_1"
+          ],
+          "produces": [
+            ".claude/artifacts/build/infer_plan.json"
+          ]
+        }
+      ],
+      "gate": null
+    },
+    {
+      "id": "phase_3_preflight_validation",
+      "tasks": [
+        {
+          "id": "t3_1",
+          "agent": "module_tester",
+          "status": "pending",
+          "needs": [
+            "t2_1",
+            "t2_2"
+          ],
+          "produces": [
+            ".claude/artifacts/build/module_validation_report.json"
+          ]
+        },
+        {
+          "id": "t3_2",
+          "agent": "safety_validator",
+          "status": "pending",
+          "needs": [
+            "t2_2",
+            "t2_4"
+          ],
+          "produces": [
+            ".claude/artifacts/build/safety_config.json"
+          ]
+        },
+        {
+          "id": "t3_3",
+          "agent": "integration_tester",
+          "status": "pending",
+          "needs": [
+            "t2_1",
+            "t2_3",
+            "t2_4"
+          ],
+          "produces": [
+            ".claude/artifacts/build/integration_report.json"
+          ]
+        }
+      ],
+      "gate": "gate_C_release_ready"
+    },
+    {
+      "id": "phase_4_execution_branches",
+      "tasks": [
+        {
+          "id": "t4_1",
+          "agent": "training_runner",
+          "status": "pending",
+          "needs": [
+            "t3_2",
+            "t3_3"
+          ],
+          "produces": [
+            ".claude/artifacts/run/checkpoints/latest.ckpt"
+          ]
+        },
+        {
+          "id": "t4_2",
+          "agent": "evaluation_agent",
+          "status": "pending",
+          "needs": [
+            "t4_1"
+          ],
+          "produces": [
+            ".claude/artifacts/run/evaluation/latest_metrics.json"
+          ]
+        },
+        {
+          "id": "t4_3",
+          "agent": "inference_deployer",
+          "status": "pending",
+          "needs": [
+            "t2_4"
+          ],
+          "produces": [
+            ".claude/artifacts/run/deploy/latest_status.json"
+          ]
+        }
+      ],
+      "gate": null
+    },
+    {
+      "id": "phase_5_convergence",
+      "tasks": [
+        {
+          "id": "t5_1",
+          "agent": "orchestrator",
+          "status": "pending",
+          "needs": [
+            "t4_2",
+            "t4_3"
+          ],
+          "produces": [
+            ".claude/artifacts/run/release_decision.json"
+          ]
+        },
+        {
+          "id": "t5_2",
+          "agent": "debug_agent",
+          "status": "pending",
+          "needs": [
+            "t5_1"
+          ],
+          "produces": [
+            ".claude/artifacts/run/regression_backlog.json"
+          ]
+        }
+      ],
+      "gate": null
+    }
+  ]
+}

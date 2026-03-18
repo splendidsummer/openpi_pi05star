@@ -118,9 +118,6 @@ We provide detailed step-by-step examples for running inference of our pre-train
 **Test inference without a robot**: We provide a [script](examples/simple_client/README.md) for testing inference without a robot. This script will generate a random observation and run inference with the model. See [here](examples/simple_client/README.md) for more details.
 
 
-
-
-
 ## Fine-Tuning Base Models on Your Own Data
 
 We will fine-tune the $\pi_{0.5}$ model on the [LIBERO dataset](https://libero-project.github.io/datasets) as a running example for how to fine-tune a base model on your own data. We will explain three steps:
@@ -142,8 +139,7 @@ uv run examples/libero/convert_libero_data_to_lerobot.py --data_dir /path/to/you
 Note: if no *checkpoint_dir* and *data-dir* assigned, then the default values in code (*DEFAULT_PARQUET_PATH* & *DEFAULT_CHECKPOINT_DIR*) will be applied. 
 
 ```bash 
-# takeuv run droid_inference_final.py \
-  --checkpoint_dir="/root/autodl-tmp/openpi_pi05star/checkpoints/pi05_droid_100_value/ \ experiment-20260208_135947/301"  \  --data_dir="/root/autodl-tmp/huggingface/lerobot/SummerZhang/droid_100"
+uv run droid_inference_final.py
 ```
 
 ### 2. Defining training configs and running training

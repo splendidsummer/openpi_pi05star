@@ -1,0 +1,829 @@
+{
+  "version": "0.3.0-exec-draft",
+  "generated_at": "2026-03-07T00:00:00Z",
+  "generated_by": "orchestrator",
+  "project": {
+    "name": "openpi_pi05star",
+    "repo_root": "/root/autodl-tmp/openpi_pi05star",
+    "objective": "高并行多智能体完成VLA数据处理、训练、评估、部署闭环"
+  },
+  "status": "success",
+  "summary": "任务图和资源配额初始化完成",
+  "artifacts": [".claude/artifacts/spec/run_plan.json"],
+  "metrics": {
+    "total_phases": 7,
+    "total_tasks": 22,
+    "cpu_bound_agents": 10,
+    "gpu_bound_agents": 5,
+    "max_parallel_cpu": 10,
+    "max_parallel_gpu": 2
+  },
+  "next_actions": [
+    "继续 Phase 0.5 用户配置",
+    "等待 Debug Agent 完成 failure_policy.json"
+  ],
+  "resources": {
+    "pools": {
+      "cpu": {
+        "max_concurrency": 10,
+        "description": "CPU池，用于轻量级任务（规划、分析、验证）",
+        "agents": [
+          "orchestrator",
+          "model_architect",
+          "data_explorer",
+          "data_loader",
+          "normalizer",
+          "training_dev",
+          "inference_dev",
+          "safety_validator",
+          "debug_agent"
+        ]
+      },
+      "gpu": {
+        "max_concurrency": 2,
+        "memory_threshold": 0.90,
+        "description": "GPU池，用于计算密集型任务（训练、测试、评估）",
+        "agents": [
+          "module_tester",
+          "integration_tester",
+          "training_runner",
+          "evaluation_agent",
+          "inference_deployer"
+        ]
+      }
+    },
+    "role_binding": {
+      "model_architect": "cpu",
+      "data_explorer": "cpu",
+      "data_loader": "cpu",
+      "normalizer": "cpu",
+      "training_dev": "cpu",
+      "inference_dev": "cpu",
+      "safety_validator": "cpu",
+      "debug_agent": "cpu",
+      "orchestrator": "cpu",
+      "module_tester": "gpu",
+      "integration_tester": "gpu",
+      "training_runner": "gpu",
+      "evaluation_agent": "gpu",
+      "inference_deployer": "gpu"
+    },
+    "allocation_strategy": {
+      "description": "基于任务类型和资源依赖的智能调度策略",
+      "rules": [
+        "任务启动时检查其 agent 的 role_binding 决定资源池",
+        "CPU 池任务可并行执行（max_concurrency=10）",
+        "GPU 池任务受限于 max_concurrency=2 和 memory_threshold=0.90",
+        "跨资源池任务按依赖关系串行调度",
+        "相同资源池内的无依赖任务可并行执行"
+      ]
+    }
+  },
+  "phases": [
+    {
+      "id": "phase_0_bootstrap",
+      "mode": "parallel",
+      "description": "初始化阶段 - 构建任务图、依赖图、资源配额",
+      "tasks": [
+        {
+          "id": "t0_1",
+          "agent": "orchestrator",
+          "pool": "cpu",
+          "action": "初始化任务图、依赖图、资源配额",
+          "dependencies": [],
+          "produces": [".claude/artifacts/spec/run_plan.json"],
+          "template": null,
+          "priority": 1,
+          "estimated_duration": "5m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          }
+        },
+        {
+          "id": "t0_2",
+          "agent": "debug_agent",
+          "pool": "cpu",
+          "action": "初始化失败分类、重试与回滚策略",
+          "dependencies": [],
+          "produces": [".claude/artifacts/spec/failure_policy.json"],
+          "template": "debug_agent",
+          "priority": 1,
+          "estimated_duration": "10m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          }
+        }
+      ],
+      "gate_on_complete": null,
+      "completion_criteria": "所有 bootstrap 任务完成，run_plan.json 和 failure_policy.json 已生成"
+    },
+    {
+      "id": "phase_0_5_user_config",
+      "mode": "interactive",
+      "description": "用户配置阶段 - 收集数据管线所需的全部路径配置",
+      "tasks": [
+        {
+          "id": "t0_5_1",
+          "agent": "orchestrator",
+          "pool": "cpu",
+          "action": "向用户收集数据管线配置",
+          "dependencies": ["t0_1"],
+          "produces": [".claude/artifacts/config/data_paths.json"],
+          "template": null,
+          "priority": 2,
+          "estimated_duration": "5m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "interactive_prompts": [
+            {
+              "prompt": "请指定原始数据集的输入路径（包含 parquet 文件的目录）",
+              "field": "raw_dataset_path",
+              "example": "/path/to/lerobot/dataset/raw",
+              "required": true,
+              "validation": "路径必须存在且包含有效的 .parquet 文件"
+            },
+            {
+              "prompt": "请指定处理后数据的输出路径（transform pipeline 产物存放位置）",
+              "field": "processed_dataset_path",
+              "example": "/path/to/processed/dataset",
+              "required": true,
+              "validation": "父目录必须存在（如不存在将创建）"
+            },
+            {
+              "prompt": "请指定归一化统计结果的输出路径（norm_stats.json 存放位置）",
+              "field": "norm_stats_path",
+              "example": "/path/to/norm_stats",
+              "required": true,
+              "validation": "父目录必须存在（如不存在将创建）"
+            },
+            {
+              "prompt": "请指定训练 checkpoint 的输出路径（可选，默认使用 artifacts 目录）",
+              "field": "checkpoint_path",
+              "example": "/path/to/checkpoints",
+              "required": false,
+              "validation": "如非默认，父目录必须存在"
+            },
+            {
+              "prompt": "请指定评估结果的输出路径（可选，默认使用 artifacts 目录）",
+              "field": "evaluation_output_path",
+              "example": "/path/to/eval_results",
+              "required": false,
+              "validation": "如非默认，父目录必须存在"
+            }
+          ]
+        }
+      ],
+      "gate_on_complete": "gate_0_5_config_ready",
+      "completion_criteria": "用户完成所有必需配置，data_paths.json 已验证并写入"
+    },
+    {
+      "id": "phase_1_specification",
+      "mode": "parallel",
+      "description": "规格定义阶段 - 生成模型配置与数据分析报告",
+      "tasks": [
+        {
+          "id": "t1_1",
+          "agent": "model_architect",
+          "pool": "cpu",
+          "action": "输出模型配置与接口约束",
+          "dependencies": ["t0_5_1"],
+          "produces": [".claude/artifacts/spec/model_config.json"],
+          "template": "model_architect",
+          "priority": 3,
+          "estimated_duration": "15m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["task_requirements", "target_platform"],
+          "required_fields": [
+            "model_type",
+            "max_token_len",
+            "discrete_state_input",
+            "action_horizon",
+            "action_dim"
+          ]
+        },
+        {
+          "id": "t1_2",
+          "agent": "data_explorer",
+          "pool": "cpu",
+          "action": "输出数据质量与异常分析",
+          "dependencies": ["t0_5_1"],
+          "produces": [".claude/artifacts/spec/data_report.json"],
+          "template": "data_explorer",
+          "priority": 3,
+          "estimated_duration": "20m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["data_paths_config"],
+          "required_fields": [
+            "sample_count",
+            "anomaly_summary",
+            "modality_stats",
+            "source_dataset_path"
+          ]
+        }
+      ],
+      "gate_on_complete": "gate_A_spec_ready",
+      "completion_criteria": "model_config.json 和 data_report.json 均已生成并验证",
+      "parallelizable": true
+    },
+    {
+      "id": "phase_2_foundation_build",
+      "mode": "parallel",
+      "description": "基础构建阶段 - 实现数据流水线、归一化、训练推理脚本",
+      "tasks": [
+        {
+          "id": "t2_1",
+          "agent": "data_loader",
+          "pool": "cpu",
+          "action": "实现0-5步数据变换流水线",
+          "dependencies": ["t1_1", "t1_2"],
+          "produces": [".claude/artifacts/build/transform_pipeline.json"],
+          "template": "data_loader",
+          "priority": 4,
+          "estimated_duration": "30m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["data_paths_config", "model_config", "data_report", "norm_stats"],
+          "required_fields": [
+            "step_0_repack",
+            "step_1_droid_inputs",
+            "step_2_normalize",
+            "step_3_resize",
+            "step_4_tokenize",
+            "step_5_pad",
+            "input_dataset_path",
+            "output_dataset_path"
+          ]
+        },
+        {
+          "id": "t2_2",
+          "agent": "normalizer",
+          "pool": "cpu",
+          "action": "生成PI0/PI05归一化统计",
+          "dependencies": ["t1_1", "t1_2"],
+          "produces": [".claude/artifacts/build/norm_stats.json"],
+          "template": "normalizer",
+          "priority": 4,
+          "estimated_duration": "45m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["data_paths_config", "model_type", "data_report"],
+          "required_fields": [
+            "use_quantile_norm",
+            "state_stats",
+            "action_stats",
+            "output_path"
+          ]
+        },
+        {
+          "id": "t2_3",
+          "agent": "training_dev",
+          "pool": "cpu",
+          "action": "生成训练脚本和配置",
+          "dependencies": ["t1_1"],
+          "produces": [".claude/artifacts/build/train_plan.json"],
+          "template": "training_dev",
+          "priority": 4,
+          "estimated_duration": "20m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["model_config", "norm_config"],
+          "required_fields": [
+            "optimizer",
+            "scheduler",
+            "checkpoint_policy"
+          ]
+        },
+        {
+          "id": "t2_4",
+          "agent": "inference_dev",
+          "pool": "cpu",
+          "action": "生成推理服务和反归一化链路",
+          "dependencies": ["t1_1"],
+          "produces": [".claude/artifacts/build/infer_plan.json"],
+          "template": "inference_dev",
+          "priority": 4,
+          "estimated_duration": "20m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["model_config", "norm_stats"],
+          "required_fields": [
+            "load_strategy",
+            "unnormalize_path",
+            "serving_interface"
+          ]
+        }
+      ],
+      "gate_on_complete": null,
+      "completion_criteria": "所有构建任务完成，transform_pipeline.json, norm_stats.json, train_plan.json, infer_plan.json 已生成",
+      "parallelizable": true
+    },
+    {
+      "id": "phase_3_preflight_validation",
+      "mode": "parallel",
+      "description": "预验证阶段 - 模块测试、安全验证、集成测试",
+      "tasks": [
+        {
+          "id": "t3_1",
+          "agent": "module_tester",
+          "pool": "gpu",
+          "action": "dummy-data与shape与前向验证",
+          "dependencies": ["t2_1", "t2_2"],
+          "produces": [".claude/artifacts/build/module_validation_report.json"],
+          "template": "module_tester",
+          "priority": 5,
+          "estimated_duration": "30m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["transform_pipeline", "model_config"],
+          "required_fields": [
+            "forward_pass_ok",
+            "shape_validation",
+            "dummy_data_validation"
+          ]
+        },
+        {
+          "id": "t3_2",
+          "agent": "safety_validator",
+          "pool": "cpu",
+          "action": "归一化空间+原始空间安全规则验证",
+          "dependencies": ["t2_2", "t2_4"],
+          "produces": [".claude/artifacts/build/safety_config.json"],
+          "template": "safety_validator",
+          "priority": 5,
+          "estimated_duration": "15m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["norm_stats", "model_config"],
+          "required_fields": [
+            "normalized_bounds",
+            "raw_joint_limits",
+            "emergency_stop_policy"
+          ]
+        },
+        {
+          "id": "t3_3",
+          "agent": "integration_tester",
+          "pool": "gpu",
+          "action": "端到端最小链路测试",
+          "dependencies": ["t2_1", "t2_3", "t2_4"],
+          "produces": [".claude/artifacts/build/integration_report.json"],
+          "template": "integration_tester",
+          "priority": 5,
+          "estimated_duration": "40m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["train_plan", "infer_plan", "transform_pipeline"],
+          "required_fields": [
+            "e2e_status",
+            "perf_baseline",
+            "blockers"
+          ]
+        }
+      ],
+      "gate_on_complete": "gate_C_release_ready",
+      "completion_criteria": "所有验证任务完成，module_validation_report.json, safety_config.json, integration_report.json 已生成",
+      "parallelizable": true,
+      "gpu_constraints": "t3_1 和 t3_3 需要 GPU，受 GPU max_concurrency=2 限制"
+    },
+    {
+      "id": "phase_4_execution_branches",
+      "mode": "parallel_branches",
+      "description": "执行分支阶段 - 训练、评估、部署并行执行",
+      "branches": {
+        "training_branch": {
+          "id": "t4_1",
+          "agent": "training_runner",
+          "pool": "gpu",
+          "action": "执行训练并产出checkpoint",
+          "dependencies": ["t3_2", "t3_3"],
+          "produces": [".claude/artifacts/run/checkpoints/latest.ckpt"],
+          "template": "training_runner",
+          "priority": 6,
+          "estimated_duration": "4-8h",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["train_plan", "integration_report", "safety_config"],
+          "required_fields": [
+            "global_step",
+            "latest_ckpt_path",
+            "train_status"
+          ],
+          "monitoring": {
+            "checkpoint_interval": "30m",
+            "metrics_log": ["loss", "learning_rate", "gradient_norm"],
+            "early_stopping": {
+              "enabled": false,
+              "patience": null
+            }
+          }
+        },
+        "evaluation_branch": {
+          "id": "t4_2",
+          "agent": "evaluation_agent",
+          "pool": "gpu",
+          "action": "从首个checkpoint起持续评估",
+          "dependencies": ["t4_1"],
+          "produces": [".claude/artifacts/run/evaluation/latest_metrics.json"],
+          "template": "evaluation_agent",
+          "priority": 7,
+          "estimated_duration": "持续运行，随 checkpoint 产出触发",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["checkpoint", "eval_protocol"],
+          "required_fields": [
+            "success_rate",
+            "safety_events",
+            "regressions"
+          ],
+          "monitoring": {
+            "trigger_on_checkpoint": true,
+            "metrics_log": ["success_rate", "average_reward", "safety_violations"]
+          }
+        },
+        "serving_branch": {
+          "id": "t4_3",
+          "agent": "inference_deployer",
+          "pool": "gpu",
+          "action": "影子部署+联调+延迟压测",
+          "dependencies": ["t2_4"],
+          "produces": [".claude/artifacts/run/deploy/latest_status.json"],
+          "template": "inference_deployer",
+          "priority": 6,
+          "estimated_duration": "1-2h",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_inputs": ["infer_plan", "checkpoint"],
+          "required_fields": [
+            "endpoint",
+            "latency_p50",
+            "latency_p95",
+            "healthcheck"
+          ],
+          "monitoring": {
+            "latency_threshold": {
+              "p50": "100ms",
+              "p95": "200ms"
+            },
+            "load_testing": {
+              "concurrent_requests": [1, 10, 50, 100],
+              "duration": "5m"
+            }
+          }
+        }
+      },
+      "gate_on_complete": "gate_D_train_ready",
+      "completion_criteria": "training_branch 产出首个可评估 checkpoint，evaluation 和 serving 分支正常运行"
+    },
+    {
+      "id": "phase_5_convergence",
+      "mode": "parallel",
+      "description": "收敛阶段 - 汇总指标、发布决策、回流任务生成",
+      "tasks": [
+        {
+          "id": "t5_1",
+          "agent": "orchestrator",
+          "pool": "cpu",
+          "action": "汇总指标并给出发布决策",
+          "dependencies": ["t4_2", "t4_3"],
+          "produces": [".claude/artifacts/run/release_decision.json"],
+          "template": null,
+          "priority": 8,
+          "estimated_duration": "15m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "decision_criteria": {
+            "success_rate_threshold": 0.90,
+            "latency_p95_threshold_ms": 200,
+            "safety_violations_max": 0,
+            "regression_tolerance": 0.05
+          }
+        },
+        {
+          "id": "t5_2",
+          "agent": "debug_agent",
+          "pool": "cpu",
+          "action": "对失败指标生成回流任务",
+          "dependencies": ["t5_1"],
+          "produces": [".claude/artifacts/run/regression_backlog.json"],
+          "template": "debug_agent",
+          "priority": 9,
+          "estimated_duration": "30m",
+          "retry_policy": {
+            "max_retries": 2,
+            "route_to": "debug_agent"
+          },
+          "required_fields": [
+            "root_cause_candidates",
+            "confidence",
+            "fix_owner",
+            "rerun_scope"
+          ]
+        }
+      ],
+      "gate_on_complete": null,
+      "completion_criteria": "release_decision.json 生成，regression_backlog.json（如有需要）生成",
+      "parallelizable": false
+    }
+  ],
+  "gates": {
+    "gate_0_5_config_ready": {
+      "id": "gate_0_5_config_ready",
+      "description": "用户数据路径配置就绪",
+      "phase": "phase_0_5_user_config",
+      "requires_artifacts": [".claude/artifacts/config/data_paths.json"],
+      "validation_rules": [
+        "raw_dataset_path 路径存在",
+        "所有必需字段已填写"
+      ],
+      "on_failure": {
+        "action": "block_progression",
+        "message": "数据路径配置不完整或无效，请重新配置",
+        "restart_from": "t0_5_1"
+      }
+    },
+    "gate_A_spec_ready": {
+      "id": "gate_A_spec_ready",
+      "description": "模型规格与数据分析就绪",
+      "phase": "phase_1_specification",
+      "requires_artifacts": [
+        ".claude/artifacts/spec/model_config.json",
+        ".claude/artifacts/spec/data_report.json"
+      ],
+      "validation_rules": [
+        "model_config.json 包含所有必需字段",
+        "data_report.json 包含数据质量分析"
+      ],
+      "on_failure": {
+        "action": "block_progression",
+        "message": "规格定义不完整，请检查 model_config.json 和 data_report.json",
+        "restart_from": "t1_1"
+      }
+    },
+    "gate_B_data_ready": {
+      "id": "gate_B_data_ready",
+      "description": "数据流水线与归一化与模块验证就绪",
+      "phase": "phase_2_foundation_build",
+      "requires_artifacts": [
+        ".claude/artifacts/build/transform_pipeline.json",
+        ".claude/artifacts/build/norm_stats.json",
+        ".claude/artifacts/build/module_validation_report.json"
+      ],
+      "validation_rules": [
+        "transform_pipeline.json 包含完整流水线步骤",
+        "norm_stats.json 包含有效的归一化统计",
+        "module_validation_report.json 通过所有检查"
+      ],
+      "on_failure": {
+        "action": "block_progression",
+        "message": "基础构建未通过验证，请检查构建产物",
+        "restart_from": "t2_1"
+      }
+    },
+    "gate_C_release_ready": {
+      "id": "gate_C_release_ready",
+      "description": "集成与安全验证通过",
+      "phase": "phase_3_preflight_validation",
+      "requires_artifacts": [
+        ".claude/artifacts/build/integration_report.json",
+        ".claude/artifacts/build/safety_config.json"
+      ],
+      "validation_rules": [
+        "integration_report.json 端到端测试通过",
+        "safety_config.json 安全规则已配置"
+      ],
+      "on_failure": {
+        "action": "block_progression",
+        "message": "预验证未通过，请检查集成和安全配置",
+        "restart_from": "t3_1"
+      }
+    },
+    "gate_D_train_ready": {
+      "id": "gate_D_train_ready",
+      "description": "首个可评估checkpoint可用",
+      "phase": "phase_4_execution_branches",
+      "requires_artifacts": [".claude/artifacts/run/checkpoints/latest.ckpt"],
+      "validation_rules": [
+        "checkpoint 文件存在且可加载",
+        "checkpoint 包含必要的模型权重和优化器状态"
+      ],
+      "on_failure": {
+        "action": "block_progression",
+        "message": "训练未产出有效 checkpoint，请检查训练状态",
+        "restart_from": "t4_1"
+      }
+    }
+  },
+  "dependency_graph": {
+    "description": "完整的任务依赖关系图，用于拓扑排序和调度",
+    "nodes": [
+      "t0_1",
+      "t0_2",
+      "t0_5_1",
+      "t1_1",
+      "t1_2",
+      "t2_1",
+      "t2_2",
+      "t2_3",
+      "t2_4",
+      "t3_1",
+      "t3_2",
+      "t3_3",
+      "t4_1",
+      "t4_2",
+      "t4_3",
+      "t5_1",
+      "t5_2"
+    ],
+    "edges": [
+      {"from": "t0_1", "to": "t0_5_1"},
+      {"from": "t0_5_1", "to": "t1_1"},
+      {"from": "t0_5_1", "to": "t1_2"},
+      {"from": "t1_1", "to": "t2_1"},
+      {"from": "t1_1", "to": "t2_2"},
+      {"from": "t1_1", "to": "t2_3"},
+      {"from": "t1_1", "to": "t2_4"},
+      {"from": "t1_2", "to": "t2_1"},
+      {"from": "t1_2", "to": "t2_2"},
+      {"from": "t2_1", "to": "t3_1"},
+      {"from": "t2_1", "to": "t3_3"},
+      {"from": "t2_2", "to": "t3_1"},
+      {"from": "t2_2", "to": "t3_2"},
+      {"from": "t2_3", "to": "t3_3"},
+      {"from": "t2_4", "to": "t3_2"},
+      {"from": "t2_4", "to": "t3_3"},
+      {"from": "t2_4", "to": "t4_3"},
+      {"from": "t3_2", "to": "t4_1"},
+      {"from": "t3_3", "to": "t4_1"},
+      {"from": "t4_1", "to": "t4_2"},
+      {"from": "t4_2", "to": "t5_1"},
+      {"from": "t4_3", "to": "t5_1"},
+      {"from": "t5_1", "to": "t5_2"}
+    ],
+    "critical_path": [
+      "t0_1",
+      "t0_5_1",
+      "t1_1",
+      "t2_2",
+      "t3_2",
+      "t4_1",
+      "t4_2",
+      "t5_1"
+    ],
+    "parallel_groups": [
+      {
+        "phase": "phase_0_bootstrap",
+        "parallel_tasks": ["t0_1", "t0_2"]
+      },
+      {
+        "phase": "phase_1_specification",
+        "parallel_tasks": ["t1_1", "t1_2"]
+      },
+      {
+        "phase": "phase_2_foundation_build",
+        "parallel_tasks": ["t2_1", "t2_2", "t2_3", "t2_4"]
+      },
+      {
+        "phase": "phase_3_preflight_validation",
+        "parallel_tasks": ["t3_1", "t3_2", "t3_3"]
+      },
+      {
+        "phase": "phase_5_convergence",
+        "sequential_tasks": ["t5_1", "t5_2"]
+      }
+    ]
+  },
+  "scheduling_strategy": {
+    "description": "任务调度策略",
+    "rules": [
+      "按 phases 顺序推进，phase 内优先并行执行无依赖任务",
+      "任务完成后，检查其 required_artifacts 是否已落到 .claude/artifacts/",
+      "如果 phase 配置了 gate_on_complete，必须校验 gate 所需产物齐全才可进入下一 phase",
+      "任务失败时调用 debug-agent，按 failure_policy 生成最小回滚与回退建议",
+      "仅做 phase_local 回滚，不全链路回滚"
+    ],
+    "resource_constraints": {
+      "cpu": {
+        "max_concurrent": 10,
+        "description": "最多同时运行 10 个 CPU 绑定任务"
+      },
+      "gpu": {
+        "max_concurrent": 2,
+        "memory_threshold": 0.90,
+        "description": "最多同时运行 2 个 GPU 绑定任务，GPU 内存使用率不超过 90%"
+      }
+    }
+  },
+  "failure_handling": {
+    "on_task_failed": {
+      "max_retries": 2,
+      "route_to": "debug_agent",
+      "classify_by": ["data", "model", "training", "deployment", "safety"]
+    },
+    "rollback": {
+      "strategy": "phase_local",
+      "description": "仅回滚失败phase及其下游，不重置全链路"
+    },
+    "resume": {
+      "allowed": true,
+      "from_artifacts": true,
+      "description": "支持从已有 artifacts 恢复执行"
+    }
+  },
+  "contracts": {
+    "task_output_schema": {
+      "type": "object",
+      "required": ["status", "summary", "artifacts", "metrics", "next_actions"],
+      "properties": {
+        "status": {
+          "enum": ["success", "failed", "partial"],
+          "description": "任务执行状态"
+        },
+        "summary": {
+          "type": "string",
+          "description": "任务执行摘要"
+        },
+        "artifacts": {
+          "type": "array",
+          "description": "任务生成的产物路径列表"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "任务执行相关指标"
+        },
+        "next_actions": {
+          "type": "array",
+          "description": "后续行动建议"
+        }
+      }
+    },
+    "artifact_validation": {
+      "rules": [
+        "所有 required_artifacts 必须在任务完成时存在",
+        "artifact 路径必须相对于项目根目录",
+        "artifact 文件必须符合对应的 JSON Schema",
+        "未生成 required artifact 将阻止任务完成"
+      ]
+    }
+  },
+  "hooks": {
+    "teammate_idle": {
+      "enabled": true,
+      "rule": "若任务未满足产物契约，返回反馈并要求继续"
+    },
+    "task_completed": {
+      "enabled": true,
+      "rule": "若未生成 required artifact 则阻止完成"
+    }
+  },
+  "commands": {
+    "train_jax": "uv run python scripts/train.py --config-name=pi05_droid",
+    "train_torch": "uv run python scripts/train_pytorch.py --config-name=pi05_droid",
+    "serve": "uv run python scripts/serve_policy.py --port=8000",
+    "test_models": "pytest --strict-markers src/openpi/models/ -m 'not manual'",
+    "test_transforms": "pytest --strict-markers src/openpi/transforms_test.py -m 'not manual'"
+  },
+  "environment": {
+    "cache_variables": [
+      "HF_LEROBOT_HOME=/root/autodl-tmp/huggingface",
+      "HF_HOME=/root/autodl-tmp/.cache",
+      "OPENPI_DATA_HOME=/root/autodl-tmp/openpi_cache"
+    ],
+    "required_before_execution": [
+      "设置环境变量以避免缓存填充主目录",
+      "验证 GPU 可用性（用于 GPU 绑定任务）",
+      "验证数据路径存在（在 phase_0_5_user_config 后）"
+    ]
+  }
+}
